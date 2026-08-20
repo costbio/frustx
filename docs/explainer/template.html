@@ -1,0 +1,1444 @@
+<title>Frustration, Three Ways</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap">
+
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens. The light palette is defined on bare :root so it also covers the
+   un-stamped "system" state; dark redefines tokens only, twice, so an explicit
+   theme choice wins in both directions.
+   The one saturated pair -- sea-green / brick -- is semantic, not decorative:
+   it is the frustration scale itself, and nothing outside a figure uses it.
+--------------------------------------------------------------------------- */
+:root{
+  --paper:#F1F4F3;      --surface:#FBFCFC;    --surface-2:#E7EDEB;
+  --ink:#0E1517;        --ink-2:#37474A;      --muted:#68797C;
+  --rule:#D3DBD9;       --rule-strong:#B4C1BE;
+  --minimal:#0D6E5D;    --minimal-soft:#D3E7E1;
+  --frustrated:#A63B2A; --frustrated-soft:#F1D8D1;
+  --neutral:#8FA0A2;
+  --accent:#0D6E5D;     --accent-ink:#FBFCFC;
+  --shadow:0 1px 2px rgba(14,21,23,.05), 0 10px 30px -18px rgba(14,21,23,.35);
+
+  --measure:66ch;
+  --step--1:.8125rem; --step-0:1.0625rem; --step-1:1.25rem;
+  --step-2:1.5rem;    --step-3:2rem;      --step-4:2.75rem; --step-5:4rem;
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Newsreader",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0A1012;      --surface:#111A1D;    --surface-2:#182427;
+    --ink:#DFE8E6;        --ink-2:#A9B9B8;      --muted:#7E9193;
+    --rule:#212D30;       --rule-strong:#33443F;
+    --minimal:#41C4A9;    --minimal-soft:#0E3A33;
+    --frustrated:#E67C63; --frustrated-soft:#41211A;
+    --neutral:#6D7F81;
+    --accent:#41C4A9;     --accent-ink:#08110F;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0A1012;      --surface:#111A1D;    --surface-2:#182427;
+  --ink:#DFE8E6;        --ink-2:#A9B9B8;      --muted:#7E9193;
+  --rule:#212D30;       --rule-strong:#33443F;
+  --minimal:#41C4A9;    --minimal-soft:#0E3A33;
+  --frustrated:#E67C63; --frustrated-soft:#41211A;
+  --neutral:#6D7F81;
+  --accent:#41C4A9;     --accent-ink:#08110F;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--body); font-size:var(--step-0); line-height:1.62;
+  font-optical-sizing:auto; -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--accent); color:var(--accent-ink)}
+a{color:inherit; text-decoration-color:var(--rule-strong); text-underline-offset:.18em}
+a:hover{text-decoration-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+
+/* ---- layout ------------------------------------------------------------- */
+.wrap{max-width:1180px; margin:0 auto; padding:0 clamp(1.15rem,4vw,2.5rem)}
+.col{max-width:var(--measure); margin-inline:auto}
+.wide{max-width:1060px; margin-inline:auto}
+section{padding-block:clamp(3.5rem,8vw,6rem); border-top:1px solid var(--rule)}
+section>*+*{margin-top:1.15rem}
+.col>*+*, .wide>*+*{margin-top:1.15rem}
+
+/* ---- type --------------------------------------------------------------- */
+h1,h2,h3,h4{font-family:var(--display); font-weight:600; text-wrap:balance;
+  line-height:1.08; letter-spacing:-.022em; margin:0}
+h1{font-size:clamp(2.6rem,7.5vw,var(--step-5)); font-weight:700; letter-spacing:-.035em}
+h2{font-size:clamp(1.75rem,4.2vw,var(--step-3)); margin-bottom:.35rem}
+h3{font-size:var(--step-1); letter-spacing:-.012em; margin-top:2.4rem}
+h4{font-size:var(--step-0); letter-spacing:0; font-weight:600}
+p{margin:0; max-width:var(--measure)}
+strong{font-weight:600}
+.lede{font-size:clamp(1.15rem,2.4vw,var(--step-1)); line-height:1.5; color:var(--ink-2); font-weight:300}
+.eyebrow{font-family:var(--mono); font-size:.6875rem; font-weight:500;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin:0 0 .9rem}
+.eyebrow::before{content:""; display:inline-block; width:1.6rem; height:1px;
+  background:var(--rule-strong); vertical-align:.28em; margin-right:.6rem}
+.note{font-size:var(--step--1); color:var(--muted); line-height:1.55; max-width:60ch}
+/* Caption sitting under a table, explaining what its columns mean. */
+.cap{font-size:.78rem; color:var(--muted); line-height:1.6; margin-top:.7rem;
+  padding-top:.7rem; border-top:1px solid var(--rule); max-width:70ch}
+.cap b{font-family:var(--mono); font-weight:500; color:var(--ink-2); font-size:.92em}
+/* Long identifiers set in mono -- repo paths, column names, CLI flags -- are single
+   unbreakable words and will push a narrow viewport sideways. `anywhere` (not
+   `break-word`) is what actually lowers their min-content width. */
+.mono{font-family:var(--mono); overflow-wrap:anywhere}
+code{font-family:var(--mono); font-size:.86em; background:var(--surface-2);
+  padding:.1em .34em; border-radius:3px; overflow-wrap:anywhere}
+
+/* ---- hero --------------------------------------------------------------- */
+.hero{border-top:0; padding-block:clamp(3rem,7vw,5rem) clamp(3rem,7vw,5rem)}
+.hero-grid{display:grid; gap:clamp(2rem,5vw,3.5rem); align-items:center;
+  grid-template-columns:minmax(0,1fr)}
+@media(min-width:960px){.hero-grid{grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr)}}
+.hero h1{margin-bottom:1.1rem}
+.hero .lede{max-width:46ch}
+.masthead{display:flex; align-items:baseline; gap:.75rem; flex-wrap:wrap;
+  font-family:var(--mono); font-size:var(--step--1); color:var(--muted);
+  padding-block:1.6rem 2.6rem}
+.masthead b{font-family:var(--display); font-size:var(--step-0); font-weight:700;
+  letter-spacing:-.02em; color:var(--ink)}
+.masthead span{letter-spacing:.06em}
+
+/* ---- equation block ----------------------------------------------------- */
+/* Equations are MathML, generated from LaTeX at build time (docs/explainer/mathml.py).
+   The browser does the layout, which is the point: the previous hand-set monospace
+   version could not keep a fraction bar in register with its numerator. */
+.eq{border-top:1px solid var(--ink); border-bottom:1px solid var(--rule);
+  background:var(--surface); padding:1.5rem clamp(1rem,3vw,1.75rem) 1.1rem;
+  margin-block:1.9rem; box-shadow:var(--shadow)}
+math{font-family:var(--body); font-synthesis:none}
+math.m-block{display:block; overflow-x:auto; overflow-y:hidden;
+  font-size:clamp(1.05rem,3vw,1.5rem); margin:.35rem auto .5rem; padding:.55rem 0 .75rem;
+  width:max-content; max-width:100%; color:var(--ink)}
+math.m-inline{font-size:1.06em; color:var(--ink-2); white-space:nowrap}
+/* Operators get air; MathML Core's defaults are tight for a display equation. */
+math.m-block mo:not([fence="true"]){padding-inline:.08em}
+math mfrac{padding-inline:.12em}
+/* \underbrace: the glyph is stripped in the build and the rule drawn here, so it
+   always spans the group it annotates regardless of what fonts the reader has. */
+math .ubrace{border-bottom:1.5px solid var(--rule-strong); padding-bottom:.16em}
+math munder{padding-top:.1em}
+/* The label under an \underbrace is prose, not math -- set it to match the captions. */
+math mrow>mstyle mtext, math munder mtext{font-family:var(--mono); font-size:.5em;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--muted); line-height:2.4}
+.eq-tag{display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap;
+  font-family:var(--mono); font-size:.6875rem; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted);
+  border-top:1px solid var(--rule); margin-top:.9rem; padding-top:.7rem}
+/* "where ..." list: one symbol per row, definition beside it. A term is defined on
+   the first page it appears on, in the same block as the equation that uses it. */
+.where{display:grid; grid-template-columns:auto 1fr; gap:.5rem 1rem;
+  align-items:baseline; margin:1rem 0 0; font-size:var(--step--1);
+  line-height:1.55; color:var(--muted)}
+.where dt{text-align:right; color:var(--ink); white-space:nowrap}
+.where dt math{font-size:1.05em; color:var(--ink)}
+.where dd{margin:0}
+.where dd em{font-style:italic; color:var(--ink-2)}
+@media (max-width:560px){
+  .where{grid-template-columns:1fr; gap:.15rem}
+  .where dt{text-align:left; margin-top:.55rem}
+}
+
+/* ---- figures ------------------------------------------------------------ */
+figure{margin:2.2rem 0; padding:0}
+.fig{background:var(--surface); border:1px solid var(--rule); border-radius:2px;
+  box-shadow:var(--shadow); overflow:hidden}
+.fig-head{display:flex; justify-content:space-between; align-items:flex-start;
+  gap:1rem; flex-wrap:wrap; padding:1rem 1.15rem .85rem;
+  border-bottom:1px solid var(--rule)}
+.fig-head h4{font-family:var(--mono); font-size:.6875rem; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+.fig-body{padding:1.15rem}
+figcaption{font-size:var(--step--1); color:var(--muted); line-height:1.6;
+  margin-top:.8rem; max-width:72ch}
+canvas{display:block; width:100%; touch-action:none}
+
+.seg{display:inline-flex; border:1px solid var(--rule-strong); border-radius:2px;
+  overflow:hidden; background:var(--paper)}
+.seg button{font-family:var(--mono); font-size:.6875rem; letter-spacing:.08em;
+  text-transform:uppercase; padding:.42rem .7rem; border:0; cursor:pointer;
+  background:transparent; color:var(--muted); transition:background .15s,color .15s}
+.seg button+button{border-left:1px solid var(--rule-strong)}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--ink); color:var(--paper)}
+
+.readout{font-family:var(--mono); font-size:var(--step--1); color:var(--ink-2);
+  min-height:1.5rem; display:flex; gap:1.2rem; flex-wrap:wrap;
+  font-variant-numeric:tabular-nums}
+.readout b{color:var(--ink); font-weight:600}
+.readout .none{color:var(--muted)}
+
+.legend{display:flex; align-items:center; gap:.55rem; font-family:var(--mono);
+  font-size:.6875rem; letter-spacing:.06em; color:var(--muted)}
+.ramp{width:130px; height:9px; border-radius:1px;
+  background:linear-gradient(90deg,var(--frustrated),var(--neutral),var(--minimal))}
+
+/* ---- tables ------------------------------------------------------------- */
+.scroll{overflow-x:auto; -webkit-overflow-scrolling:touch}
+table{border-collapse:collapse; width:100%; font-family:var(--mono);
+  font-size:var(--step--1); font-variant-numeric:tabular-nums; min-width:34rem}
+th,td{text-align:right; padding:.5rem .7rem; border-bottom:1px solid var(--rule);
+  white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{font-weight:500; font-size:.6875rem; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--ink)}
+/* Symbols must not be uppercased: it turns rho into a capital Rho (a Latin-looking P)
+   and w into W, i.e. into different symbols than the ones the equations use. */
+thead th .sym{text-transform:none; letter-spacing:0; font-family:var(--body);
+  font-style:italic; font-size:1.25em; color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td.pos{color:var(--minimal)} td.neg{color:var(--frustrated)}
+th.tl,td.tl{text-align:left; white-space:normal; color:var(--muted)}
+/* A data table carries more columns than a 66ch measure holds. Inside a text
+   column it breaks out symmetrically once there is room, rather than clipping
+   its last column behind a scrollbar most readers will not find. */
+@media(min-width:920px){.col>.scroll{width:calc(100% + 13rem); margin-inline:-6.5rem}}
+tr.sum td{border-top:1px solid var(--rule-strong); font-weight:600}
+
+/* ---- method comparison cards -------------------------------------------- */
+.cards{display:grid; gap:1px; background:var(--rule);
+  border:1px solid var(--rule); grid-template-columns:1fr; margin-top:2rem}
+@media(min-width:880px){.cards{grid-template-columns:repeat(3,1fr)}}
+.card{background:var(--surface); padding:1.4rem 1.25rem; display:flex;
+  flex-direction:column; gap:.75rem}
+.card-name{font-family:var(--display); font-size:var(--step-1); font-weight:600;
+  letter-spacing:-.015em; line-height:1.15}
+.card-sub{font-family:var(--mono); font-size:.6875rem; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted)}
+.card p{font-size:var(--step--1); line-height:1.6; color:var(--ink-2)}
+.card dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:.3rem .8rem;
+  font-family:var(--mono); font-size:.75rem; line-height:1.5;
+  border-top:1px solid var(--rule); padding-top:.8rem; margin-top:auto}
+.card dt{color:var(--muted); letter-spacing:.04em}
+.card dd{margin:0; color:var(--ink-2)}
+
+/* ---- pipeline (a real sequence, so it is numbered) ---------------------- */
+.steps{list-style:none; margin:2rem 0 0; padding:0; counter-reset:s;
+  border-top:1px solid var(--rule)}
+.steps li{counter-increment:s; display:grid; gap:.15rem 1.1rem;
+  grid-template-columns:2.6rem 1fr; padding:1rem 0;
+  border-bottom:1px solid var(--rule)}
+.steps li::before{content:counter(s,decimal-leading-zero); font-family:var(--mono);
+  font-size:.75rem; color:var(--accent); padding-top:.28rem; letter-spacing:.05em}
+.steps b{font-family:var(--display); font-weight:600; font-size:var(--step-0)}
+.steps p{font-size:var(--step--1); color:var(--ink-2); grid-column:2}
+
+/* ---- ledger (holds / fails / open) -------------------------------------- */
+.ledger{margin-top:2rem; border-top:1px solid var(--ink)}
+.entry{display:grid; gap:.2rem 1.2rem; padding:1.15rem 0;
+  border-bottom:1px solid var(--rule); grid-template-columns:1fr}
+@media(min-width:720px){.entry{grid-template-columns:7.5rem 1fr}}
+.tag{font-family:var(--mono); font-size:.625rem; letter-spacing:.13em;
+  text-transform:uppercase; padding-top:.3rem}
+.tag.holds{color:var(--minimal)} .tag.fails{color:var(--frustrated)}
+.tag.open{color:var(--muted)}
+.entry b{font-family:var(--display); font-weight:600; font-size:var(--step-0);
+  letter-spacing:-.01em}
+.entry p{font-size:var(--step--1); color:var(--ink-2); margin-top:.15rem}
+
+/* ---- decomposition bars ------------------------------------------------- */
+.bars{display:grid; gap:.5rem; margin-top:1.3rem;
+  font-family:var(--mono); font-size:var(--step--1)}
+.bar-row{display:grid; grid-template-columns:9.5rem 1fr 4.2rem; gap:.75rem;
+  align-items:center}
+.bar-lab{color:var(--ink-2); white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; font-size:.75rem}
+.bar-track{position:relative; height:20px; background:var(--surface-2);
+  border-radius:1px; overflow:hidden}
+.bar-track::before{content:""; position:absolute; inset-block:0; left:50%;
+  width:1px; background:var(--rule-strong)}
+.bar-seg{position:absolute; inset-block:3px; border-radius:1px}
+.bar-ob{background:var(--neutral); opacity:.85}
+.bar-sp{background:var(--accent)}
+.bar-sp.neg{background:var(--frustrated)}
+.bar-val{text-align:right; font-variant-numeric:tabular-nums; font-size:.75rem}
+
+/* ---- callout ------------------------------------------------------------ */
+.callout{border-left:2px solid var(--accent); padding:.15rem 0 .15rem 1.1rem;
+  margin-block:1.8rem}
+.callout p{font-size:var(--step-0); line-height:1.55}
+.callout .eyebrow{margin-bottom:.4rem}
+.callout .eyebrow::before{display:none}
+
+/* ---- code --------------------------------------------------------------- */
+pre{font-family:var(--mono); font-size:.8125rem; line-height:1.7;
+  background:var(--surface); border:1px solid var(--rule);
+  border-left:2px solid var(--rule-strong);
+  padding:1rem 1.1rem; overflow-x:auto; margin:1.3rem 0; border-radius:2px}
+pre code{background:none; padding:0; font-size:inherit}
+pre .c{color:var(--muted)}
+pre .k{color:var(--accent)}
+
+/* ---- stat strip --------------------------------------------------------- */
+.stats{display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule);
+  grid-template-columns:repeat(2,1fr); margin-top:1.8rem}
+@media(min-width:720px){.stats{grid-template-columns:repeat(4,1fr)}}
+.stat{background:var(--surface); padding:1rem 1.05rem}
+.stat .v{font-family:var(--display); font-size:var(--step-2); font-weight:600;
+  letter-spacing:-.03em; font-variant-numeric:tabular-nums; line-height:1.1}
+.stat .l{font-family:var(--mono); font-size:.625rem; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--muted); margin-top:.35rem}
+
+footer{border-top:1px solid var(--ink); padding-block:2.5rem 4rem;
+  font-family:var(--mono); font-size:var(--step--1); color:var(--muted)}
+footer p{max-width:70ch}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms !important; transition-duration:.001ms !important}
+}
+</style>
+
+<div class="wrap">
+
+<div class="masthead">
+  <b>FrustX</b>
+  <span>Local frustration &middot; atomistic resolution</span>
+  <span style="margin-left:auto">Worked on 1UBQ &middot; 200 decoys</span>
+</div>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="hero-grid">
+    <div>
+      <p class="eyebrow">How the calculation works</p>
+      <h1>Frustration,<br>three ways</h1>
+      <p class="lede">Three tools ask the same question of a protein &mdash; <em>is this
+      contact the best one that could sit here?</em> &mdash; and they all answer it with
+      the same <strong>Z&#8209;score</strong> &mdash; a count of standard deviations away from
+      a random baseline. Everything that separates them is hidden inside two symbols.</p>
+      <p class="note" style="margin-top:1.6rem">Every number on this page is computed from
+      runs on disk in this repository: ubiquitin, 200 decoys, scored with Rosetta
+      <strong>REF2015</strong> (Rosetta's current all-atom energy function), against
+      frustratometeR on the identical input file.</p>
+    </div>
+    <figure class="fig" style="margin:0">
+      <div class="fig-head">
+        <h4>1UBQ &middot; contact map</h4>
+        <div class="seg" role="group" aria-label="Contact map layer">
+          <button type="button" data-map="index" aria-pressed="true">Index</button>
+          <button type="button" data-map="onebody" aria-pressed="false">One&#8209;body</button>
+          <button type="button" data-map="specific" aria-pressed="false">Specific</button>
+        </div>
+      </div>
+      <div class="fig-body">
+        <canvas id="map" height="620" aria-label="Ubiquitin contact map coloured by frustration index"></canvas>
+        <div class="readout" id="map-readout" style="margin-top:.9rem">
+          <span class="none">Hover a cell &mdash; each one is a residue pair in contact.</span>
+        </div>
+        <div class="legend" style="margin-top:.9rem">
+          <span>frustrated</span><span class="ramp"></span><span>minimal</span>
+          <span style="margin-left:auto">scale clamped &plusmn;2</span>
+        </div>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ===================== WHAT IT IS ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">The idea in plain terms</p>
+    <h2>Most of a protein is boring. The interesting parts are the mistakes it keeps on purpose.</h2>
+
+    <p style="margin-top:1.5rem">Evolution has had a long time to optimise a protein's core.
+    Pick almost any two amino acids that touch each other in a folded structure, swap them for
+    a random pair, and the structure gets worse. That is what it means for a landscape to be
+    <em>funnelled</em>: nearly every local interaction is already close to the best one
+    available at that spot.</p>
+
+    <p><strong>Nearly.</strong> A minority of contacts are worse than random. They cost the
+    protein stability, and they survive anyway &mdash; which is the tell. Something other
+    than folding is paying for them: a binding site that has to open, a hinge that has to
+    move, a catalytic residue held in a strained geometry. These are the
+    <strong>frustrated</strong> contacts, and they cluster on the parts of a protein that
+    actually do something.</p>
+
+    <p>So the measurement is a comparison, not an absolute. Take one contact. Compute its
+    energy as it really is. Then compute what that same spot would have given for a large
+    number of random amino-acid pairs, and ask how far the real one sits from that
+    distribution.</p>
+
+    <div class="callout">
+      <p class="eyebrow">The whole method</p>
+      <p>Score the native contact. Score the same contact in a few hundred randomised
+      sequences. Report the difference in units of the randomised spread.</p>
+    </div>
+
+    <p>That is a Z&#8209;score, and it is the one equation all three tools share.</p>
+  </div>
+
+  <div class="wide">
+    <div class="eq">
+\[ F_{ij} \;=\; \frac{\left\langle E^{\,\mathrm{decoy}}_{ij}\right\rangle \;-\; E^{\,\mathrm{native}}_{ij}}
+                          {\sigma\left(E^{\,\mathrm{decoy}}_{ij}\right)} \]
+      <dl class="where">
+        <dt>\(i,\,j\)</dt>
+        <dd>the two residues in contact &mdash; one <em>contact</em> is one such pair.</dd>
+
+        <dt>\(E^{\,\mathrm{native}}_{ij}\)</dt>
+        <dd>the interaction energy of that pair in the real protein, in <em>REU</em>
+        (Rosetta Energy Units, the arbitrary but internally consistent scale REF2015
+        reports; more negative = more favourable).</dd>
+
+        <dt>\(E^{\,\mathrm{decoy}}_{ij}\)</dt>
+        <dd>the same energy after the two residues have been swapped for a random
+        amino-acid pair and the side chains <em>repacked</em> &mdash; every side chain
+        re-chosen from Rosetta's library of observed conformations (<em>rotamers</em>) to
+        suit the new sequence, with the backbone held exactly where it was. A
+        <em>decoy</em> is one such randomised sequence; a run uses a few hundred.</dd>
+
+        <dt>\(\left\langle\,\cdot\,\right\rangle,\ \sigma\)</dt>
+        <dd>mean and standard deviation across that decoy ensemble. &#963; is the unit
+        the index is counted in, which is why <em>F</em> is dimensionless: it is a
+        Z&#8209;score, &ldquo;how many decoy standard deviations&rdquo;.</dd>
+
+        <dt>\(F_{ij}\)</dt>
+        <dd><strong>positive</strong> &mdash; the native pair beats the random ones:
+        <em>minimally frustrated</em>. <strong>Negative</strong> &mdash; random pairs do
+        better: <em>highly frustrated</em>. Near zero: <em>neutral</em>.</dd>
+      </dl>
+      <div class="eq-tag">
+        <span>Eq. 1 &middot; Chen et al., Nat Commun 11:5944 (2020)</span>
+        <span>frustx/frustration.py</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p class="note"><strong>A sign warning that matters when reading code.</strong> The paper
+    writes Eq. 1 upside down, as \((E_0 - \left\langle E_U \right\rangle)\,/\,\sigma\) &mdash; \(E_0\)
+    the native (folded) energy, \(E_U\) the unfolded decoy ensemble &mdash;
+    which makes a <em>well</em>-optimised contact negative. frustratometeR reports the
+    opposite convention. FrustX follows frustratometeR &mdash; positive is good &mdash; so
+    that the two are directly comparable, and says so at
+    <span class="mono">frustx/frustration.py</span> rather than leaving it to be discovered.</p>
+  </div>
+</section>
+
+<!-- ===================== THREE METHODS ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Where they differ</p>
+    <h2>Two symbols carry all the disagreement</h2>
+    <p style="margin-top:1.5rem">Eq. 1 is fixed. What is not fixed is <strong>what
+    &ldquo;E&rdquo; means</strong> &mdash; which energy function, and how much of the protein
+    a single contact's energy is allowed to include &mdash; and <strong>what
+    &ldquo;decoy&rdquo; means</strong>, i.e. exactly what gets randomised. Those two choices
+    produce three different numbers from the same structure.</p>
+  </div>
+
+  <div class="wide">
+    <div class="cards">
+      <div class="card">
+        <div>
+          <div class="card-sub">Ferreiro / Wolynes, 2007&ndash;</div>
+          <div class="card-name">frustratometeR</div>
+        </div>
+        <p>The original, and the field's reference. Energies come from <strong>AWSEM</strong>,
+        a coarse-grained model: each residue is a few beads, and a contact's energy is a
+        tabulated function of the C&#946;&ndash;C&#946; distance and how buried each residue
+        is. Fast enough to run on anything.</p>
+        <p>It offers three <strong>null models</strong> &mdash; three different recipes for
+        &ldquo;what a random version of this contact looks like&rdquo;, which is the
+        baseline the native is scored against. They randomise genuinely different things,
+        a distinction easy to get wrong from the papers alone.</p>
+        <dl>
+          <dt>Energy</dt><dd>AWSEM, coarse-grained</dd>
+          <dt>Scope</dt><dd>pair + both neighbourhoods</dd>
+          <dt>Decoys</dt><dd>each residue redrawn independently, with replacement</dd>
+          <dt>Cost</dt><dd>seconds</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <div>
+          <div class="card-sub">Chen et al., Nat Commun 2020</div>
+          <div class="card-name">Atomistic frustration</div>
+        </div>
+        <p>The same index, moved to a <strong>full all-atom force field</strong> &mdash;
+        Rosetta REF2015. Every side-chain atom is present, so the energy responds to
+        hydrogen-bond geometry, rotamer packing and charge pairing that a bead model cannot
+        represent. The price is that each decoy needs a real side-chain repacking.</p>
+        <p>Its Eq. 2 defines a contact's energy as the pair term <em>plus half of every
+        other interaction touching either residue</em>. One term is deleted from the force
+        field: <span class="mono">fa_rep</span>, the steric repulsion. A random side chain
+        dropped onto a backbone it never evolved for will clash, and that clash is large
+        enough to drown every other signal &mdash; so the term is removed from the native
+        and the decoys alike, not from the decoys only.</p>
+        <dl>
+          <dt>Energy</dt><dd>Rosetta REF2015, <span class="mono">fa_rep</span> removed</dd>
+          <dt>Scope</dt><dd>Eq. 2 many-body background</dd>
+          <dt>Decoys</dt><dd>whole-sequence shuffle</dd>
+          <dt>Code</dt><dd>never published</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <div>
+          <div class="card-sub">This repository</div>
+          <div class="card-name">FrustX</div>
+        </div>
+        <p>An independent implementation of Chen et al., built to be checkable line by line.
+        Same force field, same shuffle-and-repack decoys &mdash; with <strong>one deliberate,
+        measured deviation</strong>: the Eq. 2 background is switched off by default.</p>
+        <p>It also reports the index split into the part explained by the two residues alone
+        and the part specific to the pair.</p>
+        <dl>
+          <dt>Energy</dt><dd>Rosetta REF2015, <span class="mono">fa_rep</span> removed</dd>
+          <dt>Scope</dt><dd>bare pair; Eq. 2 background off by default</dd>
+          <dt>Decoys</dt><dd>the real sequence shuffled &mdash; same composition</dd>
+          <dt>Cost</dt><dd>minutes, parallel</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>Why FrustX turns off the paper's Eq. 2</h3>
+    <p>Eq. 2 is the atomistic paper's answer to a real problem: an all-atom force field is
+    many-bodied, so changing one side chain perturbs more than one pair. Its fix is to
+    fold the neighbours in.</p>
+  </div>
+
+  <div class="wide">
+    <div class="eq">
+\[ E_{ij} \;=\; e_{ij} \;+\; \tfrac{w}{2}\sum_{k \neq j} e_{ik}
+                      \;+\; \tfrac{w}{2}\sum_{l \neq i} e_{jl} \]
+      <dl class="where">
+        <dt>\(e_{ij}\)</dt>
+        <dd>lower-case <em>e</em> is the raw force-field interaction between residues
+        <em>i</em> and <em>j</em> and nothing else. Upper-case \(E_{ij}\) is what gets
+        fed to Eq.&nbsp;1 &mdash; the pair plus its surroundings.</dd>
+
+        <dt>\(\sum_{k \neq j} e_{ik}\)</dt>
+        <dd>every <em>other</em> interaction residue <em>i</em> makes, counted at half
+        weight so that no interaction is double-counted when the same formula is
+        applied to its own pair. Likewise \(\sum_{l \neq i} e_{jl}\) for <em>j</em>.</dd>
+
+        <dt>\(w\)</dt>
+        <dd>the <strong>background weight</strong> &mdash; FrustX's addition, not the
+        paper's. \(w = 1\) is Eq.&nbsp;2 exactly as Chen et al. write it; \(w = 0\)
+        strips the background and scores the bare pair. It is a dial rather than a
+        fork because the choice turned out to matter, and the next section is the
+        measurement that set it. CLI flag:
+        <span class="mono">--background-weight</span>.</dd>
+      </dl>
+      <div class="eq-tag">
+        <span>Eq. 2 &middot; Chen et al. 2020, plus FrustX's background weight</span>
+        <span>--background-weight, default 0</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>Written out, that background is just \(\tfrac{1}{2}(R_i + R_j)\), where \(R_i\) is
+    residue <em>i</em>'s total interaction energy with everything around it &mdash; a quantity
+    with <em>no reference to j at all</em>. And it dominates: on ubiquitin the direct term is
+    around &minus;0.7 REU against a background near &minus;10 REU. So Eq. 2 as written yields
+    an index that is essentially a residue property wearing a contact's label.</p>
+
+    <p>Measured on 1UBQ, sweeping the background weight \(w\) from 0 to 1 over one fixed
+    decoy ensemble, so that every row differs only in how much background is folded in:</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th><span class="sym">w</span></th><th>median</th><th>min</th><th>sd</th>
+          <th>contacts &lt; &minus;1</th>
+          <th class="tl" style="text-align:right;color:var(--muted)">one-body
+          <span class="sym">&rho;</span></th></tr></thead>
+        <tbody>
+          <tr><td>0.0 &nbsp;<span style="color:var(--accent)">&#9664; default</span></td>
+              <td>0.04</td><td>&minus;3.15</td><td>0.92</td><td>11</td><td>&rho; = 0.44</td></tr>
+          <tr><td>0.1</td><td>0.56</td><td>&minus;0.80</td><td>0.59</td><td>0</td><td>&rho; = 0.72</td></tr>
+          <tr><td>0.5</td><td>0.56</td><td>&minus;0.16</td><td>0.46</td><td>0</td><td>&rho; = 0.84</td></tr>
+          <tr><td>1.0 &nbsp;<span style="color:var(--muted)">&#9664; Eq. 2</span></td>
+              <td>0.55</td><td>&minus;0.11</td><td>0.44</td><td>0</td><td>&rho; = 0.86</td></tr>
+          <tr class="sum"><td>frustratometeR</td><td>0.38</td><td>&minus;2.75</td>
+              <td>1.07</td><td>30</td><td>&rho; = 0.46</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">Columns 2&ndash;5 describe the distribution of \(F_{ij}\) over the 475
+    contacts. <b>one-body &#961;</b> is the Spearman rank correlation &mdash; a number
+    between &minus;1 and +1 saying how well one quantity orders another &mdash; between the
+    index and the \(c + a_i + a_j\) fit of the next section. Read it as
+    <em>&ldquo;how much of this index is just residue identity?&rdquo;</em>; the closer to 1,
+    the less of it is about the contact.</p>
+    <p class="note" style="margin-top:.9rem">At \(w = 1\) the index
+    finds <em>zero</em> frustrated contacts in ubiquitin and 86% of it is predictable from
+    residue identity alone. At \(w = 0\) the spread, the minimum and
+    the frustrated count all land near frustratometeR's. A frustration index that never
+    reports frustration is not working, so FrustX ships \(w = 0\) and
+    exposes <span class="mono">--background-weight</span> for anyone who wants the paper's
+    literal formula.</p>
+  </div>
+</section>
+
+<!-- ===================== PIPELINE ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">What a run actually does</p>
+    <h2>Five steps, one of which costs everything</h2>
+    <ol class="steps">
+      <li><b>Build the contact map</b>
+        <p>Every residue pair whose C&#945; atoms sit within 10 &#197;. On ubiquitin that is
+        475 pairs from 76 residues.</p></li>
+      <li><b>Score the native structure</b>
+        <p>Repack the side chains without touching the backbone, then pull the pairwise
+        energy for every contact out of Rosetta's energy graph. The repack matters: comparing
+        an unprepared crystal structure against repacked decoys measures the repacking, not
+        the sequence.</p></li>
+      <li><b>Shuffle and repack, a few hundred times</b>
+        <p>Permute the sequence &mdash; which preserves amino-acid composition exactly, for
+        free &mdash; thread it onto the same fixed backbone, repack, minimise. This is the
+        entire cost of the method. One shuffle yields a decoy energy for <em>every</em>
+        contact at once, so 200 decoys means 200 repacks, not 200 &times; 475.</p></li>
+      <li><b>Apply Eq. 1</b>
+        <p>Per contact, over the decoy ensemble. Pairs whose energy is identically zero in
+        every sequence &mdash; two residues in geometric contact with no atomistic
+        interaction &mdash; give &#963;&nbsp;=&nbsp;0 and are dropped rather than clamped.
+        On ubiquitin that removes 18 of 475.</p></li>
+      <li><b>Split the index</b>
+        <p>Fit \(F_{ij} \approx c + a_i + a_j\)
+        by least squares and report both the fit and the residual, so a claim about a
+        <em>pair</em> can be separated from a claim about its two <em>residues</em>.</p></li>
+    </ol>
+    <p class="note" style="margin-top:1.4rem">Decoys are independent, so step 3 forks a
+    worker pool. Measured on 1UBQ: 1.94&times; at 2 jobs, 3.24&times; at 4, 4.40&times; at 8.
+    Sublinearity at 8 is simultaneous multithreading, not a serial bottleneck &mdash; the
+    serial part is about 1% of runtime.</p>
+  </div>
+</section>
+
+<!-- ===================== WORKED EXAMPLE ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Demonstration &middot; ubiquitin</p>
+    <h2>One contact, all the way through</h2>
+    <p style="margin-top:1.5rem">Below is the actual decoy energy distribution for three real
+    contacts in 1UBQ, from 200 shuffled sequences. The histogram is the null. The marked line
+    is the native. Eq. 1 is just the distance between them, counted in standard
+    deviations.</p>
+  </div>
+
+  <div class="wide">
+    <figure class="fig">
+      <div class="fig-head">
+        <h4>Decoy energy distribution &middot; 200 sequences</h4>
+        <div class="seg" role="group" aria-label="Which contact">
+          <button type="button" data-eg="minimal" aria-pressed="true">Minimally frustrated</button>
+          <button type="button" data-eg="neutral" aria-pressed="false">Neutral</button>
+          <button type="button" data-eg="frustrated" aria-pressed="false">Highly frustrated</button>
+        </div>
+      </div>
+      <div class="fig-body">
+        <canvas id="dist" height="340" aria-label="Histogram of decoy contact energies with the native energy marked"></canvas>
+        <div class="scroll" style="margin-top:1.1rem">
+          <table id="dist-table">
+            <thead><tr><th>quantity</th><th>symbol</th><th>value</th><th class="tl">meaning</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <figcaption style="padding:0 1.15rem 1.15rem">Energies in Rosetta Energy Units, REF2015
+      with the repulsive term removed. Lower is more favourable.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <h3>Reading the three cases</h3>
+    <p><strong>LYS27&ndash;ASP52</strong> is ubiquitin's buried salt bridge. Its native
+    energy is <span class="mono">&minus;4.37</span> REU while random pairs at that same
+    site average <span class="mono">&minus;0.39 &plusmn; 0.78</span>. The native beats the
+    null by five standard deviations. Nothing about the geometry is unusual; it is the
+    <em>identities</em> that are doing the work, and swapping them costs real energy.</p>
+
+    <p><strong>GLU34&ndash;ILE36</strong> is what most of a protein looks like. Native
+    <span class="mono">&minus;0.077</span> against a null mean of
+    <span class="mono">&minus;0.078</span>. The real sequence is indistinguishable from a
+    random one here. F = &minus;0.002.</p>
+
+    <p><strong>VAL17&ndash;LYS29</strong> is the interesting one. Its native energy is
+    <em>positive</em> &mdash; <span class="mono">+1.64</span> REU, an actively unfavourable
+    interaction &mdash; while the random ensemble sits at <span class="mono">&minus;0.26</span>.
+    Ubiquitin is paying about three standard deviations of stability to bury a charged lysine
+    against a valine. That is what a frustrated contact is: a cost the protein carries for a
+    reason that is not folding.</p>
+
+    <div class="callout">
+      <p class="eyebrow">Thresholds, and where they came from</p>
+      <p>F &gt; 0.78 is called minimally frustrated and F &lt; &minus;1.0 highly frustrated.
+      Both numbers were calibrated for AWSEM, not for REF2015. FrustX inherits them so its
+      output is comparable, and flags in <span class="mono">docs/method.md</span> that the
+      &minus;1.0 cut in particular is unvalidated for an atomistic energy function.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== WHOLE PROTEIN + COMPARISON ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">The whole protein, and the benchmark</p>
+    <h2>Right distribution, different assignment</h2>
+    <p style="margin-top:1.5rem">Run over all 457 usable contacts, FrustX produces a
+    distribution with the right shape: centred near zero, a long favourable tail, a small
+    minority genuinely frustrated. Those are the same gross statistics frustratometeR
+    reports on the identical input file.</p>
+  </div>
+
+  <div class="wide">
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="col">
+    <p style="margin-top:1.8rem">Contact by contact, though, the two tools rank differently.
+    Against frustratometeR's mutational mode &mdash; the closest of its three nulls to what
+    FrustX does &mdash; the rank correlation over the 344 contacts both tools find is
+    <strong>&rho; = +0.302</strong>. Real, highly significant, and weak.</p>
+  </div>
+
+  <div class="wide">
+    <figure class="fig">
+      <div class="fig-head">
+        <h4>FrustX vs frustratometeR &middot; 344 shared contacts</h4>
+        <div class="seg" role="group" aria-label="frustratometeR mode">
+          <button type="button" data-mode="mutational" aria-pressed="true">Mutational</button>
+          <button type="button" data-mode="configurational" aria-pressed="false">Configurational</button>
+        </div>
+      </div>
+      <div class="fig-body">
+        <canvas id="scatter" height="430" aria-label="Scatter plot of FrustX against frustratometeR frustration index"></canvas>
+      </div>
+      <figcaption style="padding:0 1.15rem 1.15rem" id="scatter-cap"></figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <h3>Why the modes differ so much</h3>
+    <p>The gap between &rho; = +0.30 and &rho; = +0.13 is not noise, and it is not a bug in
+    either tool. The three frustratometeR modes randomise different things. AWSEM's contact
+    energy depends on three inputs &mdash; the C&#946;&ndash;C&#946; distance
+    <span class="mono">r<sub>ij</sub></span>, each residue's <em>burial density</em> (how
+    many neighbours it has, i.e. how buried it is), and the two amino-acid identities
+    &mdash; and each mode randomises a different subset of them. Read out of the AWSEM
+    source that builds its bundled binary, not from the papers:</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>mode</th><th>distance <span class="sym">r<sub>ij</sub></span></th><th>burial densities</th>
+          <th>identities</th><th class="tl">energy scope</th></tr></thead>
+        <tbody>
+          <tr><td>configurational</td><td class="neg">replaced</td><td class="neg">replaced</td>
+              <td>random</td><td class="tl">pair only</td></tr>
+          <tr><td>mutational</td><td class="pos">native</td><td class="pos">native</td>
+              <td>random</td><td class="tl">pair + neighbourhoods</td></tr>
+          <tr><td>singleresidue</td><td>&mdash;</td><td class="pos">native</td>
+              <td>random, one position</td><td class="tl">whole neighbourhood</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note" style="margin-top:.9rem">Configurational mode does <em>not</em> hold
+    geometry fixed. It replaces the pair distance with that of some unrelated contacting
+    pair, then draws the two burial densities from a <em>second, independent</em> random
+    pair &mdash; so distance and densities need not even come from the same place in the
+    protein. That is a violent null, and it is why configurational output behaves like a
+    rescaled energy rather than a per-contact Z&#8209;score. This document previously
+    described that null from the papers' prose and got it wrong twice; the version above is
+    read from <span class="mono">fix_backbone.cpp</span>.</p>
+
+    <p style="margin-top:1.5rem"><strong>The largest single cause of the disagreement turned
+    out to be scope, not physics.</strong> frustratometeR's mutational energy is not a pair
+    energy at all &mdash; it is the pair plus <em>every</em> contact touching either residue.
+    Comparing FrustX's bare pair energy against that was a category mismatch stacked on top
+    of a force-field difference. Matching the scope raises &rho; from +0.30 to +0.52 across
+    seven structures, and flips the contact-specific residual from negative to positive in
+    all seven &mdash; the first configuration in this project's record with any
+    contact-specific agreement at all.</p>
+
+    <p>It is still not the default, for a reason worth stating: the neighbourhood readout is
+    95% predictable from residue identity. Most of that &rho; gain is the two indices
+    becoming <em>jointly</em> degenerate. FrustX exists to give per-contact resolution, and a
+    readout that is 95% one-body does not provide it however well it correlates.
+    <span class="mono">--readout neighbourhood</span> is available and documented as a
+    diagnostic.</p>
+  </div>
+</section>
+
+<!-- ===================== DECOMPOSITION ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Two questions, two columns</p>
+    <h2>Is this residue frustrated, or is this pair?</h2>
+    <p style="margin-top:1.5rem">Burial genuinely is most of what determines whether a
+    contact is well-optimised. A deeply buried residue drags all of its contacts in the same
+    direction, and that is a real physical fact, not an artifact &mdash; Ferreiro's
+    single-residue frustration is <em>deliberately</em> a residue-level index.</p>
+
+    <p>But it means a mostly-additive index cannot support a claim about a
+    <em>particular</em> contact. So rather than choose, FrustX reports both parts of every
+    contact:</p>
+  </div>
+
+  <div class="wide">
+    <div class="eq">
+\[ F_{ij} \;=\; \underbrace{c + a_i + a_j}_{\text{one-body}}
+              \;+\; \underbrace{s_{ij}}_{\text{contact-specific}} \]
+      <dl class="where">
+        <dt>\(a_i\)</dt>
+        <dd>one fitted number per residue position, shared by <em>all</em> of that
+        residue's contacts. It absorbs whatever <em>i</em> carries everywhere it goes
+        &mdash; burial, exposure, local packing density.</dd>
+
+        <dt>\(c\)</dt>
+        <dd>a single intercept for the structure. \(c\) and the \(a_i\) are found by
+        least squares, one dummy variable per position.</dd>
+
+        <dt>\(s_{ij}\)</dt>
+        <dd>the <strong>residual</strong>: what is left once both residues' one-body
+        tendencies are removed. This is the part that belongs to <em>this pair and no
+        other</em>, and it is the column to use when a claim is about a specific
+        contact rather than about a residue.</dd>
+      </dl>
+      <div class="eq-tag">
+        <span>frustx/additivity.py</span>
+        <span>columns: frustration_index_onebody / _specific</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p class="note"><strong>One piece of maths bites here.</strong> The design matrix is rank
+    deficient &mdash; adding <em>t</em> to <span class="mono">c</span> while subtracting
+    <em>t</em>/2 from every <span class="mono">a<sub>i</sub></span> leaves every fitted value
+    unchanged. So the two per-contact columns are unique and safe, but the per-residue
+    coefficients are identified only up to a constant. Compare them within a run, read
+    differences, never compare across runs.</p>
+
+    <h3>The residual finds chemistry</h3>
+    <p>The strongest test of whether the split means anything: sort ubiquitin's contacts by
+    the <em>specific</em> part and see what comes up.</p>
+  </div>
+
+  <div class="wide">
+    <figure class="fig">
+      <div class="fig-head">
+        <h4>Largest contact-specific components, both signs</h4>
+        <div class="legend">
+          <span><span style="display:inline-block;width:10px;height:10px;background:var(--neutral);vertical-align:-1px"></span> one-body</span>
+          <span><span style="display:inline-block;width:10px;height:10px;background:var(--accent);vertical-align:-1px"></span> specific</span>
+        </div>
+      </div>
+      <div class="fig-body">
+        <div class="bars" id="bars"></div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="col">
+    <p><strong>Four of the top six are salt bridges</strong> &mdash; LYS27&ndash;ASP52,
+    GLU16&ndash;LYS29, GLU51&ndash;ARG54, ASP39&ndash;ARG74 &mdash; and in each the one-body
+    part is close to zero while the specific part carries almost everything. That is exactly
+    the behaviour a contact-specific index should have: a charge pair is well-optimised
+    <em>because those two residues are together</em>, not because either is individually
+    buried.</p>
+
+    <p>At the other end, the most frustrated contacts are electrostatic too, in the opposite
+    direction: <strong>VAL17&ndash;LYS29</strong> (a buried charge with nothing to pair
+    with), <strong>GLU24&ndash;ASP52</strong> and <strong>ASP21&ndash;ASN25</strong>. This is
+    not a validation of the index's absolute scale, but it is a direct check that the
+    residual is chemistry rather than noise.</p>
+
+    <p class="note"><strong>One entry in that list is an artifact, and it is left visible on
+    purpose.</strong> GLY35&ndash;PRO38 scores +6.5 not because anything is optimised but
+    because both residues are nearly atomistically inert, so both the native energy and
+    &#963; collapse toward zero and their ratio blows up. It is the residual cousin of the
+    &#963;&nbsp;=&nbsp;0 contacts dropped at step 4, and any downstream use of this index
+    needs a guard for it.</p>
+  </div>
+</section>
+
+<!-- ===================== LEDGER ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Standing on</p>
+    <h2>What holds, what failed, what is open</h2>
+    <p style="margin-top:1.5rem">Most of what this project has produced is negative results,
+    and they are more useful than the positive ones &mdash; each closed a direction that
+    looked obviously right beforehand.</p>
+  </div>
+
+  <div class="wide">
+  <div class="ledger">
+    <div class="entry"><span class="tag holds">Holds</span><div>
+      <b>The pipeline is exact and reproducible</b>
+      <p>Rosetta's energy decomposition into pairwise terms is verified exact on real
+      structures, including two terms that are not on the naive energy graph. 85 tests. A
+      pinned-seed run is bit-identical at any job count.</p></div></div>
+
+    <div class="entry"><span class="tag holds">Holds</span><div>
+      <b>Agreement with frustratometeR is real but weak</b>
+      <p>&rho; = +0.30 per contact and +0.48 per residue on ubiquitin, extended to 6055
+      contacts across seven structures with a strikingly consistent pooled &rho; = +0.302.
+      Different force field, different null &mdash; the two are not expected to be identical,
+      but this is not agreement either.</p></div></div>
+
+    <div class="entry"><span class="tag holds">Holds</span><div>
+      <b>Scope mismatch explains more of the gap than physics does</b>
+      <p>Matching frustratometeR's neighbourhood readout moves &rho; +0.30 &rarr; +0.52 and
+      flips the contact-specific residual positive in all seven structures. It is the only
+      axis measured so far that moves contact-specific agreement at all.</p></div></div>
+
+    <div class="entry"><span class="tag fails">Withdrawn</span><div>
+      <b>&ldquo;GTPase switch regions become frustrated on activation&rdquo;</b>
+      <p>One conformer pair (Rheb) showed it at p = 0.038. Two more pairs chosen for
+      complementary weaknesses did not: Rap2A <em>reversed</em> sign at nominally the same p,
+      and the one resolution-matched pair was flat. Pooled p = 0.86. Withdrawn. The lesson
+      is that the noise floor had been measured over decoy resampling only, which says
+      nothing about crystal-to-crystal variation.</p></div></div>
+
+    <div class="entry"><span class="tag fails">Failed</span><div>
+      <b>Generating decoys locally around each contact</b>
+      <p>The most promising idea on the list, tested properly: every reachable identity pair
+      enumerated exactly rather than sampled, endpoints pre-registered before any index
+      existed. It lost on every one &mdash; &rho; down, AUC down (area under the ROC curve:
+      how cleanly the index separates the sites an endpoint marks from the ones it does
+      not; 0.5 is a coin flip), and the index became
+      <em>more</em> residue-additive, the opposite of the intent. The predicted 15% variance
+      reduction measured 3%.</p></div></div>
+
+    <div class="entry"><span class="tag fails">Failed</span><div>
+      <b>&ldquo;We were disadvantaged by too few decoys&rdquo;</b>
+      <p>Split-half reliability of the index is 0.987 at 500 decoys &mdash; that is, score the
+        contacts on one random half of the decoys, again on the other half, and the two
+        rankings agree at 0.987. More decoys buy
+      +0.002 of correlation. Decoy count was never the limiting factor, and neither was the
+      contact-atom definition &mdash; switching C&#945; to C&#946; fixes a 74% &rarr; ~100%
+      contact-set overlap with frustratometeR without improving agreement at all.</p></div></div>
+
+    <div class="entry"><span class="tag open">Open</span><div>
+      <b>The &minus;1.0 threshold is unvalidated for REF2015</b>
+      <p>Inherited from AWSEM. The cut point survives a direct test on its own terms, but the
+      resulting category fractions differ from the coarse-grained tool's, and no atomistic
+      calibration exists.</p></div></div>
+
+    <div class="entry"><span class="tag open">Open</span><div>
+      <b>Chen et al. cannot be reproduced contact-by-contact</b>
+      <p>The paper publishes no per-contact values, its code was never released, the two
+      quantitative systems behind its category ratios are unnamed, and its Fig. 2
+      &ldquo;local Q&rdquo; trace is never defined. Comparison against it is limited to
+      aggregate claims. frustratometeR is the only real benchmark available.</p></div></div>
+
+    <div class="entry"><span class="tag open">Open</span><div>
+      <b>Ligands are not supported</b>
+      <p>Heteroatoms currently crash the contact map. This is the blocker on everything
+      below.</p></div></div>
+  </div>
+  </div>
+</section>
+
+<!-- ===================== DRUG SELECTIVITY ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Where this goes next</p>
+    <h2>From frustration to selectivity</h2>
+    <p style="margin-top:1.5rem">The attraction is obvious. A drug's selectivity problem is
+    that its target has close relatives with near-identical pockets. Sequence identity does
+    not separate them; shape barely does. Frustration is a different kind of coordinate
+    &mdash; it asks whether a pocket's local interactions are <em>strained</em>, which is a
+    property that can differ sharply between two pockets that look the same.</p>
+
+    <h3>Where the EGFR work stands</h3>
+    <p>A companion repository, <span class="mono">costbio/egfr_analysis_pipeline_withRosetta</span>,
+    already took this a long way. It extends the atomistic paper's four EGFR&ndash;inhibitor
+    complexes to <strong>61 structures and 51 unique ligands</strong>, with full ligand
+    parameterisation into Rosetta &mdash; the hard, unglamorous part. Structure preparation
+    is done for all 61; frustration has been run on 19, at 50 decoys each.</p>
+
+    <p>The headline correlation with affinity is <span class="mono">r =
+    &minus;0.297, p = 0.217</span> &mdash; not significant. More important than the p-value
+    is <em>why</em>, because the diagnosis is already in that repository and it is a
+    good one:</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>metric vs log affinity</th><th>Spearman <span class="sym">&rho;</span></th><th>p</th><th class="tl">what it really measures</th></tr></thead>
+        <tbody>
+          <tr><td>n_neutral</td><td class="neg">&minus;0.541</td><td>0.017</td><td class="tl">pocket size</td></tr>
+          <tr><td>n_contacts_total</td><td class="neg">&minus;0.521</td><td>0.022</td><td class="tl">pocket size</td></tr>
+          <tr><td>n_highly_frustrated</td><td class="neg">&minus;0.455</td><td>0.050</td><td class="tl">pocket size</td></tr>
+          <tr><td>frac_minimally</td><td class="pos">+0.351</td><td>0.141</td><td class="tl">frustration</td></tr>
+          <tr><td>frac_highly</td><td>&minus;0.172</td><td>0.482</td><td class="tl">frustration</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note" style="margin-top:.9rem">Every metric reaching significance is a count,
+    and pocket contact counts range 476&ndash;733 across these structures. The significant
+    result is that bigger pockets bind tighter. Dividing pocket size out reverses the sign:
+    <span class="mono">frac_minimally</span> goes to +0.35 overall and +0.75 (p = 0.008) on
+    the 11 wild-type non-covalent structures &mdash; meaning a <em>less</em> frustrated
+    pocket binds <em>more weakly</em>, opposite to the paper's hypothesis. And the cleanest
+    single case is flat: ligand 03P appears in both 3POZ (23 pM) and 3W2O (8400 pM), a
+    365&#8209;fold affinity difference, with <span class="mono">frac_minimally</span> of
+    0.5007 and 0.4964.</p>
+
+    <h3>Three things have to change before this can work</h3>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+      <li><b>Stop predicting affinity. Predict differences.</b>
+        <p>Absolute binding affinity is the wrong endpoint and always was. It mixes K<sub>d</sub> (a direct
+        binding constant) with IC<sub>50</sub> (the concentration that halves an enzyme's
+        activity) across labs &mdash; two assays that do not share a scale &mdash; it is dominated by ligand size and lipophilicity, and no local
+        structural coordinate is going to beat a docking score at it. Selectivity is a
+        <em>paired</em> quantity &mdash; the same ligand against two targets &mdash; and the
+        pairing cancels exactly the systematics that are drowning the current
+        signal. This is the single largest available improvement and it costs no new
+        compute, only a different table.</p></li>
+
+      <li><b>Use the contact-specific column, not the raw index.</b>
+        <p>This is where the additivity work pays off. Pocket frustration is dominated by
+        burial, and burial is nearly identical across the ATP sites of a kinase family
+        &mdash; so the one-body part is close to constant and contributes almost nothing to a
+        selectivity contrast while contributing most of the variance. The residual is where a
+        selectivity-determining residue difference such as T790M &mdash; the EGFR gatekeeper substitution behind most
+        first-generation inhibitor resistance &mdash; would have to show up. A
+        contrast built on <span class="mono">frustration_index_specific</span> starts with a
+        far better signal-to-noise ratio than one built on the index.</p></li>
+
+      <li><b>Define a null for protein&ndash;ligand contacts.</b>
+        <p>The blocker. FrustX shuffles a <em>sequence</em>; a ligand has no sequence, so
+        there is nothing to permute on that side of the contact. The defensible null is to
+        randomise the protein residue only and leave the ligand fixed &mdash; which is
+        structurally frustratometeR's single-residue null, and FrustX does not implement it.
+        It has to come before ligands are wired in, or the numbers will not mean anything.
+        Heteroatom support in the contact map is the smaller half of this job.</p></li>
+    </ol>
+
+    <h3>What a real test would look like</h3>
+    <p>The dataset that fits this design already exists: published kinase profiling panels
+    give one inhibitor's dissociation constant against a few hundred kinases. That turns a
+    19-point regression with mixed assay types into hundreds of within-ligand contrasts,
+    each of which cancels the ligand entirely. The prediction to test is specific and
+    falsifiable &mdash; <em>the kinase whose pocket contacts are more frustrated in the
+    apo (ligand-free) state is the one the inhibitor binds more weakly</em> &mdash; and it fails cleanly
+    if the contrast comes out flat.</p>
+
+    <p>Two honest caveats to carry in. Frustration is computed on a fixed backbone, so it
+    cannot see induced fit, which is a large part of real kinase selectivity. And covalent
+    inhibitors &mdash; 15 of the 61 EGFR structures &mdash; are outside the model entirely:
+    their selectivity comes from a reactive cysteine, not from any equilibrium energy this
+    index describes. They should be analysed separately or excluded, not pooled.</p>
+
+    <div class="callout">
+      <p class="eyebrow">The shortest path</p>
+      <p>Finish the 42 remaining EGFR structures at matched decoy count, re-express every
+      endpoint as a within-ligand contrast on the contact-specific column, and only then
+      decide whether protein&ndash;ligand contacts are worth the work of a new null.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== USAGE ===================== -->
+<section>
+  <div class="col">
+    <p class="eyebrow">Running it</p>
+    <h2>Using FrustX</h2>
+    <p style="margin-top:1.5rem">One command, one directory in, four files out. PyRosetta is
+    the only dependency that is not on PyPI.</p>
+
+<pre><code><span class="c"># install (PyRosetta needs the PATH prefix -- its installer shells out to a</span>
+<span class="c"># bare `pip`, which without this lands 3.2 GB outside the venv)</span>
+pip install -e <span class="k">"."</span>
+PATH=<span class="k">".venv/bin:$PATH"</span> .venv/bin/python -m pip install pyrosetta-installer
+PATH=<span class="k">".venv/bin:$PATH"</span> .venv/bin/python -c \
+  <span class="k">"import pyrosetta_installer as p; p.install_pyrosetta(serialization=True)"</span>
+
+<span class="c"># a real run: 500 decoys, 8 cores</span>
+frustx 1ubq.pdb -o results/1ubq -n 500 -j 8</code></pre>
+
+    <h3>What comes out</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>file</th><th>one row per</th><th class="tl">the columns that matter</th></tr></thead>
+        <tbody>
+          <tr><td>contacts.csv</td><td>contact</td>
+              <td class="tl">frustration_index, _onebody, _specific, frustration_class</td></tr>
+          <tr><td>residues.csv</td><td>residue</td>
+              <td class="tl">mean_frustration, onebody_coefficient, category counts</td></tr>
+          <tr><td>frustration.pdb</td><td>atom</td><td class="tl">index in the B-factor column</td></tr>
+          <tr><td>run.json</td><td>run</td><td class="tl">every parameter, plus additive_r2 and elapsed</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note" style="margin-top:.9rem">Colour by B-factor in PyMOL or ChimeraX and
+    <span class="mono">frustration.pdb</span> is a frustration map on the structure with no
+    further work.</p>
+
+    <h3>The flags worth knowing</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>flag</th><th>default</th><th class="tl">when to change it</th></tr></thead>
+        <tbody>
+          <tr><td>-n, --decoys</td><td>1000</td>
+              <td class="tl">200 is already reliable (split-half 0.987). Lower it freely; runtime is linear in it.</td></tr>
+          <tr><td>-j, --jobs</td><td>1</td>
+              <td class="tl">Always raise it. Efficient point is your physical core count.</td></tr>
+          <tr><td>--protocol</td><td>relax</td>
+              <td class="tl"><span class="mono">min</span> is ~10&times; faster for exploratory runs.</td></tr>
+          <tr><td>--background-weight</td><td>0</td>
+              <td class="tl">Set to 1 only to reproduce the paper's literal Eq. 2, knowing what it does.</td></tr>
+          <tr><td>--readout</td><td>pair</td>
+              <td class="tl"><span class="mono">neighbourhood</span> to compare against frustratometeR on matched scope.</td></tr>
+          <tr><td>--contact-atom</td><td>CA</td>
+              <td class="tl"><span class="mono">CB</span> to match frustratometeR's contact set.</td></tr>
+          <tr><td>--packing-seed</td><td>off</td>
+              <td class="tl">Verification only. Makes a run bit-identical at any <span class="mono">-j</span>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="eyebrow">Two things to check before trusting a run</p>
+      <p>How many contacts were dropped for &#963;&nbsp;=&nbsp;0 &mdash; a large fraction
+      means the contact map is admitting pairs with no atomistic interaction, and
+      <span class="mono">--contact-atom CB</span> is the fix. And
+      <span class="mono">additive_r2</span> in <span class="mono">run.json</span>: if it is
+      high, read the specific column rather than the index before making any claim about an
+      individual contact.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="col">
+    <p><strong style="font-family:var(--display);color:var(--ink)">FrustX</strong> &mdash;
+    local frustration at atomistic resolution. Method and every experiment behind this page
+    are recorded in <span class="mono">docs/method.md</span>; the numbers here are rebuilt
+    from <span class="mono">results/</span> by
+    <span class="mono">scripts/artefact_payload.py</span>.</p>
+    <p style="margin-top:1rem">Reference: Chen M, Chen X, Schafer NP, Clementi C, Komives EA,
+    Ferreiro DU, Wolynes PG. <em>Surveying biomolecular frustration at atomic
+    resolution.</em> Nat Commun 11:5944 (2020). Benchmark: frustratometeR (Rausch et al.,
+    Bioinformatics 2021), on AWSEM.</p>
+  </div>
+</footer>
+
+</div><!-- /wrap -->
+
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+(() => {
+"use strict";
+const D = JSON.parse(document.getElementById("payload").textContent);
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* Canvas colours come from the CSS tokens rather than being duplicated here, so
+   the figures follow the viewer's theme instead of drifting from the page. */
+const T = {};
+function readTokens(){
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["ink","ink-2","muted","rule","rule-strong","surface","surface-2",
+                   "paper","minimal","frustrated","neutral","accent"])
+    T[k] = cs.getPropertyValue("--" + k).trim();
+}
+const hex = h => {
+  h = h.replace("#","");
+  if (h.length === 3) h = [...h].map(c => c + c).join("");
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+};
+const mix = (a, b, t) => {
+  const A = hex(a), B = hex(b);
+  return `rgb(${A.map((v,i) => Math.round(v + (B[i]-v)*t)).join(",")})`;
+};
+/* Diverging ramp: brick at -clamp, neutral at 0, sea-green at +clamp. The scale is
+   clamped rather than normalised because a handful of near-inert pairs produce huge
+   ratios (see GLY35-PRO38) and would otherwise flatten the whole map. */
+const CLAMP = 2;
+const ramp = v => {
+  const t = Math.max(-1, Math.min(1, v / CLAMP));
+  return t < 0 ? mix(T.neutral, T.frustrated, -t) : mix(T.neutral, T.minimal, t);
+};
+
+function fit(cv, cssH){
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const w = cv.parentElement.clientWidth;
+  const h = cssH || cv.height;
+  cv.style.height = h + "px";
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return [g, w, h];
+}
+const F_MONO = px => `${px}px "IBM Plex Mono", ui-monospace, monospace`;
+
+/* ---------------- contact map ---------------- */
+const L = D.n_residues;
+const cellData = new Map();                       // "i,j" -> [index, onebody, specific]
+for (const [ri, rj, f, ob, sp] of D.contacts){
+  cellData.set(`${ri},${rj}`, [f, ob, sp]);
+  cellData.set(`${rj},${ri}`, [f, ob, sp]);
+}
+const aa = {}; for (const r of D.residues) aa[r.n] = r.aa;
+const mapCv = document.getElementById("map");
+const mapOut = document.getElementById("map-readout");
+let mapLayer = 0, mapGeom = null, mapReveal = RM ? 1 : 0;
+
+function drawMap(){
+  const [g, w] = fit(mapCv, Math.min(mapCv.parentElement.clientWidth, 620));
+  const pad = {l: 34, t: 14, r: 14, b: 30};
+  const side = Math.min(w - pad.l - pad.r, mapCv.clientHeight - pad.t - pad.b);
+  const cell = side / L;
+  mapGeom = {x0: pad.l, y0: pad.t, cell, side};
+
+  g.fillStyle = T.surface; g.fillRect(pad.l, pad.t, side, side);
+  for (const [key, v] of cellData){
+    const [a, b] = key.split(",").map(Number);
+    if ((a + b) / (2 * L) > mapReveal) continue;
+    g.fillStyle = ramp(v[mapLayer]);
+    g.fillRect(pad.l + (a-1)*cell, pad.t + (b-1)*cell, Math.max(cell, 1.2), Math.max(cell, 1.2));
+  }
+  // diagonal and frame
+  g.strokeStyle = T.rule; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(pad.l, pad.t); g.lineTo(pad.l + side, pad.t + side); g.stroke();
+  g.strokeRect(pad.l + .5, pad.t + .5, side, side);
+  g.fillStyle = T.muted; g.font = F_MONO(9.5);
+  for (let r = 10; r <= L; r += 10){
+    const p = (r - .5) * cell;
+    g.textAlign = "right";  g.fillText(r, pad.l - 6, pad.t + p + 3);
+    g.textAlign = "center"; g.fillText(r, pad.l + p, pad.t + side + 14);
+  }
+  g.textAlign = "center";
+  g.fillText("residue", pad.l + side / 2, pad.t + side + 27);
+}
+function revealMap(){
+  if (RM){ drawMap(); return; }
+  const t0 = performance.now();
+  const step = now => {
+    mapReveal = Math.min(1, (now - t0) / 900);
+    drawMap();
+    if (mapReveal < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function mapHover(ev){
+  if (!mapGeom) return;
+  const r = mapCv.getBoundingClientRect();
+  const i = Math.floor((ev.clientX - r.left - mapGeom.x0) / mapGeom.cell) + 1;
+  const j = Math.floor((ev.clientY - r.top  - mapGeom.y0) / mapGeom.cell) + 1;
+  const v = cellData.get(`${i},${j}`);
+  if (!v){
+    mapOut.innerHTML = '<span class="none">Hover a cell &mdash; each one is a residue pair in contact.</span>';
+    return;
+  }
+  const s = n => (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(2);
+  mapOut.innerHTML =
+    `<span><b>${aa[i]}${i}–${aa[j]}${j}</b></span>` +
+    `<span>index <b style="color:${v[0] >= 0 ? "var(--minimal)" : "var(--frustrated)"}">${s(v[0])}</b></span>` +
+    `<span>one-body ${s(v[1])}</span><span>specific ${s(v[2])}</span>`;
+}
+mapCv.addEventListener("pointermove", mapHover);
+mapCv.addEventListener("pointerleave", () => {
+  mapOut.innerHTML = '<span class="none">Hover a cell &mdash; each one is a residue pair in contact.</span>';
+});
+
+/* ---------------- decoy distribution ---------------- */
+const distCv = document.getElementById("dist");
+const distBody = document.querySelector("#dist-table tbody");
+let egKey = "minimal";
+
+function drawDist(){
+  const e = D.worked[egKey];
+  const [g, w, h] = fit(distCv, 340);
+  // Two label lanes above the plot and a span lane below it, so the native/mean
+  // callouts never land on a bar and the Z-score span never lands on the axis title.
+  const pad = {l: 48, t: 50, r: 20, b: 60};
+  const W = w - pad.l - pad.r, H = h - pad.t - pad.b;
+  const lo = e.bins[0], hi = e.bins[e.bins.length - 1];
+  const X = v => pad.l + (v - lo) / (hi - lo) * W;
+  const maxC = Math.max(...e.counts);
+  const Y = c => pad.t + H - (c / maxC) * H;
+
+  g.strokeStyle = T.rule; g.lineWidth = 1;                       // baseline
+  g.beginPath(); g.moveTo(pad.l, pad.t + H + .5); g.lineTo(pad.l + W, pad.t + H + .5); g.stroke();
+
+  // +/- 1 sigma band around the decoy mean: the unit Eq. 1 counts in
+  const bw = X(e.mu + e.sd) - X(e.mu - e.sd);
+  g.fillStyle = mix(T.surface, T.neutral, .16);
+  g.fillRect(X(e.mu - e.sd), pad.t, bw, H);
+  if (bw > 40){                                   // off-centre: the mean rule sits at X(mu)
+    g.fillStyle = T.muted; g.font = F_MONO(9); g.textAlign = "left";
+    g.fillText("\u00b11\u03c3", X(e.mu - e.sd) + 4, pad.t + 11);
+  }
+
+  g.fillStyle = mix(T.surface, T.ink, .30);                       // histogram
+  for (let i = 0; i < e.counts.length; i++){
+    if (!e.counts[i]) continue;
+    const x0 = X(e.bins[i]), x1 = X(e.bins[i+1]);
+    g.fillRect(x0 + .5, Y(e.counts[i]), Math.max(x1 - x0 - 1, 1), pad.t + H - Y(e.counts[i]));
+  }
+
+  const rule = (x, col, dash, lab, lane) => {                     // vertical markers
+    const yLab = pad.t - (lane === 0 ? 30 : 12);
+    g.save(); g.strokeStyle = col; g.lineWidth = 1.5; g.setLineDash(dash);
+    g.beginPath(); g.moveTo(x, yLab + 4); g.lineTo(x, pad.t + H); g.stroke();
+    g.restore();
+    g.fillStyle = col; g.font = F_MONO(10.5);
+    g.textAlign = x > pad.l + W * .6 ? "right" : "left";
+    g.fillText(lab, x + (g.textAlign === "right" ? -6 : 6), yLab);
+  };
+  const good = e.index >= 0;
+  rule(X(e.mu), T.muted, [3,3], "⟨E decoy⟩ " + e.mu.toFixed(2), 1);
+  rule(X(e.e_nat), good ? T.minimal : T.frustrated, [],
+       "E native " + e.e_nat.toFixed(2), 0);
+
+  // the Z-score itself, drawn as the span it measures
+  g.strokeStyle = good ? T.minimal : T.frustrated; g.lineWidth = 1;
+  const yb = pad.t + H + 16;
+  g.beginPath(); g.moveTo(X(e.mu), yb); g.lineTo(X(e.e_nat), yb); g.stroke();
+  for (const x of [X(e.mu), X(e.e_nat)]){
+    g.beginPath(); g.moveTo(x, yb - 3.5); g.lineTo(x, yb + 3.5); g.stroke();
+  }
+  g.fillStyle = good ? T.minimal : T.frustrated; g.font = F_MONO(11);
+  g.textAlign = "center";
+  g.fillText(`F = ${e.index >= 0 ? "+" : "−"}${Math.abs(e.index).toFixed(2)} σ`,
+             (X(e.mu) + X(e.e_nat)) / 2, yb + 17);
+
+  g.fillStyle = T.muted; g.font = F_MONO(9.5); g.textAlign = "center";
+  g.fillText("contact energy (REU)", pad.l + W / 2, h - 4);
+  g.save(); g.translate(13, pad.t + H / 2); g.rotate(-Math.PI / 2);
+  g.textAlign = "center"; g.fillText("decoys", 0, 0); g.restore();
+
+  const s = (n, d = 2) => (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(d);
+  distBody.innerHTML = [
+    ["native energy", "E native", e.e_nat.toFixed(3) + " REU", "this contact in the real sequence"],
+    ["decoy mean", "⟨E decoy⟩", e.mu.toFixed(3) + " REU", "200 shuffled sequences, same backbone"],
+    ["decoy spread", "σ", e.sd.toFixed(3) + " REU", "the unit the index is counted in"],
+    ["<b>frustration index</b>", "<b>Fᵢⱼ</b>",
+     `<b style="color:${e.index >= 0 ? "var(--minimal)" : "var(--frustrated)"}">${s(e.index)}</b>`,
+     "(⟨E decoy⟩ − E native) / σ"],
+    ["one-body part", "c + aᵢ + aⱼ", s(e.onebody), "explained by the two residues alone"],
+    ["contact-specific part", "sᵢⱼ", s(e.specific), "belongs to this pair and no other"],
+  ].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="tl">${r[3]}</td></tr>`).join("");
+}
+
+/* ---------------- FrustX vs frustratometeR ---------------- */
+const scCv = document.getElementById("scatter");
+const scCap = document.getElementById("scatter-cap");
+let scMode = "mutational";
+
+function drawScatter(){
+  const c = D.comparison[scMode];
+  const [g, w, h] = fit(scCv, 430);
+  const pad = {l: 52, t: 18, r: 18, b: 46};
+  const W = w - pad.l - pad.r, H = h - pad.t - pad.b;
+  const xr = [-3.3, 5.4], yr = [-3.2, 3.2];
+  const X = v => pad.l + (Math.max(xr[0], Math.min(xr[1], v)) - xr[0]) / (xr[1]-xr[0]) * W;
+  const Y = v => pad.t + H - (Math.max(yr[0], Math.min(yr[1], v)) - yr[0]) / (yr[1]-yr[0]) * H;
+
+  g.fillStyle = T.surface; g.fillRect(pad.l, pad.t, W, H);
+  g.strokeStyle = T.rule; g.lineWidth = 1;                        // grid
+  for (let v = -3; v <= 5; v++){
+    if (v <= xr[1]) { g.beginPath(); g.moveTo(X(v), pad.t); g.lineTo(X(v), pad.t + H); g.stroke(); }
+    if (v <= yr[1]) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(pad.l + W, Y(v)); g.stroke(); }
+  }
+  g.save(); g.strokeStyle = T["rule-strong"]; g.setLineDash([4,4]);   // the two thresholds
+  for (const t of [D.thresholds.minimal, D.thresholds.frustrated]){
+    g.beginPath(); g.moveTo(X(t), pad.t); g.lineTo(X(t), pad.t + H); g.stroke();
+    g.beginPath(); g.moveTo(pad.l, Y(t)); g.lineTo(pad.l + W, Y(t)); g.stroke();
+  }
+  g.restore();
+
+  for (const [a, b] of c.points){                                 // points
+    g.beginPath(); g.arc(X(a), Y(b), 2.6, 0, 6.284);
+    g.fillStyle = ramp(a); g.globalAlpha = .78; g.fill();
+  }
+  g.globalAlpha = 1;
+  g.strokeStyle = T["rule-strong"]; g.strokeRect(pad.l + .5, pad.t + .5, W, H);
+
+  g.fillStyle = T.muted; g.font = F_MONO(9.5);
+  for (let v = -3; v <= 5; v++){
+    if (v <= xr[1]) { g.textAlign = "center"; g.fillText(v, X(v), pad.t + H + 15); }
+    if (v <= yr[1]) { g.textAlign = "right";  g.fillText(v, pad.l - 7, Y(v) + 3); }
+  }
+  g.fillStyle = T["ink-2"]; g.font = F_MONO(10.5); g.textAlign = "center";
+  g.fillText("FrustX  (REF2015, bare pair)", pad.l + W / 2, h - 6);
+  g.save(); g.translate(15, pad.t + H / 2); g.rotate(-Math.PI / 2);
+  g.textAlign = "center"; g.fillText(`frustratometeR  (${scMode})`, 0, 0); g.restore();
+
+  const p = c.p < 1e-6 ? "p < 10⁻⁶" : "p = " + c.p.toFixed(3);
+  scCap.innerHTML = `Spearman <b class="mono">ρ = ${c.rho >= 0 ? "+" : "−"}${Math.abs(c.rho).toFixed(3)}</b>
+    over ${c.n_shared} shared contacts, ${p}. On the contact-specific residual alone it falls to
+    ρ = ${c.rho_specific >= 0 ? "+" : "−"}${Math.abs(c.rho_specific).toFixed(3)} — almost all of
+    the agreement lives in the part both indices can predict from residue identity.
+    Dashed rules mark the +0.78 and −1.0 class thresholds; points are coloured by FrustX index.`;
+}
+
+/* ---------------- decomposition bars & stat strip (DOM, not canvas) -------- */
+function buildBars(){
+  const rows = [...D.top_specific, ...D.most_frustrated];
+  const scale = 50 / Math.max(...rows.map(r => Math.abs(r.index)));
+  document.getElementById("bars").innerHTML = rows.map(r => {
+    const ob = r.onebody * scale, ix = r.index * scale;
+    const a = {l: 50 + Math.min(0, ob), w: Math.abs(ob)};
+    const b = {l: 50 + Math.min(ob, ix), w: Math.abs(r.specific * scale)};
+    return `<div class="bar-row">
+      <span class="bar-lab">${r.pair}</span>
+      <span class="bar-track">
+        <span class="bar-seg bar-ob" style="left:${a.l}%;width:${a.w}%"></span>
+        <span class="bar-seg bar-sp${r.specific < 0 ? " neg" : ""}" style="left:${b.l}%;width:${b.w}%"></span>
+      </span>
+      <span class="bar-val" style="color:${r.index >= 0 ? "var(--minimal)" : "var(--frustrated)"}">${
+        r.index >= 0 ? "+" : "−"}${Math.abs(r.index).toFixed(2)}</span>
+    </div>`;
+  }).join("");
+}
+function buildStats(){
+  const s = D.stats, c = D.comparison.mutational;
+  document.getElementById("stats").innerHTML = [
+    [D.n_contacts, "contacts scored", `${D.n_dropped_sigma0} dropped at σ = 0`],
+    [s.n_minimal, "minimally frustrated", "F > +0.78"],
+    [s.n_frustrated, "highly frustrated", "F < −1.0"],
+    ["+" + c.rho.toFixed(3), "rank correlation vs frustratometeR", `${c.n_shared} shared contacts`],
+  ].map(([v, l, sub]) =>
+    `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div>
+     <div class="l" style="letter-spacing:.02em;text-transform:none;opacity:.75">${sub}</div></div>`
+  ).join("");
+}
+
+/* ---------------- wiring ---------------- */
+function seg(sel, onPick){
+  document.querySelectorAll(sel).forEach(b => b.addEventListener("click", () => {
+    b.parentElement.querySelectorAll("button")
+      .forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+    onPick(b);
+  }));
+}
+seg("[data-map]", b => { mapLayer = ["index","onebody","specific"].indexOf(b.dataset.map); drawMap(); });
+seg("[data-eg]",  b => { egKey = b.dataset.eg; distCv.style.opacity = 0; drawDist();
+                         requestAnimationFrame(() => { distCv.style.transition = "opacity .22s";
+                                                       distCv.style.opacity = 1; }); });
+seg("[data-mode]", b => { scMode = b.dataset.mode; drawScatter(); });
+
+function redrawAll(){ readTokens(); drawMap(); drawDist(); drawScatter(); }
+readTokens(); drawDist(); drawScatter(); buildBars(); buildStats(); revealMap();
+
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(redrawAll, 120); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawAll);
+new MutationObserver(redrawAll).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+})();
+</script>

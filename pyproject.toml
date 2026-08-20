@@ -1,0 +1,24 @@
+[project]
+name = "frustx"
+version = "0.0.1"
+description = "Local frustration in protein structures at atomistic resolution"
+requires-python = ">=3.11"
+# PyRosetta is deliberately NOT listed here: it is installed via the
+# `pyrosetta-installer` helper, not from PyPI, so pip cannot resolve it.
+dependencies = ["numpy", "pandas", "biopython"]
+
+[project.scripts]
+frustx = "frustx.cli:main"
+
+[project.optional-dependencies]
+# Neither is imported by frustx/ itself: matplotlib is for scripts/plot_*.py, and
+# latex2mathml is a build-time dependency of docs/explainer/build.py, which turns
+# the LaTeX in the explainer template into MathML.
+dev = ["pytest", "matplotlib", "latex2mathml"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

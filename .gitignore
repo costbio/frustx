@@ -1,0 +1,30 @@
+# --- Environments -----------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Data: NEVER tracked in git. Versioned with DVC (gs:// remote) ----------
+# Inputs (downloaded//prepared structures) and outputs (energies, decoys, tables)
+data/
+results/
+*.pdb
+*.cif
+*.csv
+*.parquet
+!tests/**/*.pdb          # tiny hand-built fixtures ARE code, and stay in git
+
+# --- Tooling ----------------------------------------------------------------
+.pytest_cache/
+.dvc/cache
+.dvc/tmp
+/results
+
+# GCP service-account keys must never be committed. Real keys live in ~/.gcp (mode 700).
+*-service-account*.json
+*gserviceaccount*.json
+githubrepodvcs-*.json
+
+# Claude Code: settings.json is shared project config and IS tracked. The .local
+# variant is per-machine permission grants -- noise for anyone else, so it is not.
+.claude/settings.local.json
