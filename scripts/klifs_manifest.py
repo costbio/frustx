@@ -8,7 +8,9 @@ and run as
 This step downloads NO structures; it queries KLIFS and RCSB metadata only and writes:
 
     klifs_raw.csv       every KLIFS structure, all species, unfiltered (reproducibility)
-    klifs_manifest.csv  one structure per (kinase UniProt, ligand code)
+    klifs_kinases.csv   KLIFS kinase_information, all species: every kinase (domain), with
+                        or without structures. scripts/bindingdb_activity.py reads it.
+    klifs_manifest.csv  one structure per (KLIFS kinase id, ligand code)
     klifs_funnel.json   counts after each filter, thresholds, fetch dates, API version
     rcsb_cache.json     RCSB metadata responses, reused on the next run (--refresh-rcsb)
 
@@ -36,7 +38,7 @@ live API (2026-10-04) rather than assumed:
 
 Pipeline order (build_manifest): KLIFS filters -> RCSB check and its drops ->
 deduplicate. The RCSB drops MUST precede deduplication: otherwise a structure that RCSB
-rejects can win its (uniprot, ligand) pair and take the whole pair down with it, even
+rejects can win its (kinase, ligand) pair and take the whole pair down with it, even
 though a valid runner-up existed.
 
 All filtering/annotation/deduplication logic is pure (DataFrames and dicts in, DataFrames
@@ -79,7 +81,8 @@ DEFAULT_EXCLUDE = ["ATP", "ADP", "ANP", "ACP", "AGS", "AMP", "ADN", "3AM", "AP2"
                    "M33", "112", "NBS", "3GU", "MG", "MN"]
 
 MANIFEST_COLUMNS = [
-    "kinase_name", "kinase_family", "kinase_group", "uniprot", "klifs_structure_id",
+    "kinase_name", "klifs_kinase_id", "kinase_family", "kinase_group", "uniprot",
+    "multi_domain_uniprot", "klifs_structure_id",
     "pdb_klifs", "pdb", "chain", "altloc", "ligand_code", "ligand_name",
     "allosteric_ligand_code", "resolution", "quality_score", "missing_residues",
     "missing_atoms", "dfg", "ac_helix", "rcsb_status", "ligand_chain_differs",
@@ -112,11 +115,11 @@ def _chunked(endpoint: str, kinase_ids: list[int]) -> list[dict]:
     return rows
 
 
-def fetch_raw() -> tuple[pd.DataFrame, str]:
+def fetch_raw() -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """Every KLIFS structure (all species), with kinase family/group/UniProt and the
     ligand's name joined on. Column names are KLIFS's own, untouched.
 
-    Returns (table, KLIFS API version string).
+    Returns (structures, kinase_information table, KLIFS API version string).
     """
     api_version = _get(KLIFS_SWAGGER)["info"]["version"]
 
@@ -136,7 +139,7 @@ def fetch_raw() -> tuple[pd.DataFrame, str]:
     raw = structures.merge(
         kinases[["kinase_ID", "family", "group", "uniprot"]], on="kinase_ID", how="left")
     raw["ligand_name"] = raw["ligand"].map(names)
-    return raw, api_version
+    return raw, kinases, api_version
 
 
 # Polymer fields are not used by rcsb_annotate; they are cached so that a ligand code
@@ -239,6 +242,9 @@ def normalise(raw: pd.DataFrame) -> pd.DataFrame:
     df = pd.DataFrame({
         "species": raw["species"],
         "kinase_name": raw["kinase"],
+        # KLIFS's kinase is a kinase DOMAIN: JAK2 (JH1) and JAK2-b (JH2 pseudokinase)
+        # are two kinase ids under one UniProt. This id, not UniProt, is the dedup key.
+        "klifs_kinase_id": raw["kinase_ID"].astype(int),
         "kinase_family": raw["family"],
         "kinase_group": raw["group"],
         "uniprot": raw["uniprot"].fillna("").astype(str),
@@ -271,7 +277,8 @@ def _counts(step: str, df: pd.DataFrame) -> dict:
         "step": step,
         "structures": len(df),
         "pdb_entries": int(df["pdb"].nunique()),
-        "kinases": int(df["uniprot"].nunique()),
+        "kinases": int(df["klifs_kinase_id"].nunique()),    # KLIFS kinase (domain) ids
+        "uniprots": int(df["uniprot"].nunique()),
         "ligands": int(df.loc[df["ligand_code"] != "", "ligand_code"].nunique()),
     }
 
@@ -425,7 +432,7 @@ def remap_collisions(df: pd.DataFrame) -> pd.DataFrame:
     return dup[remapped].sort_values(["pdb", "chain", "altloc", "pdb_klifs"])
 
 
-# Tie-break order for choosing one structure per (uniprot, ligand_code). The task fixes
+# Tie-break order for choosing one structure per (klifs_kinase_id, ligand_code). The task fixes
 # the first five keys; chain, altloc and structure id are appended only so that two
 # chains of the same PDB entry (which tie on everything else) resolve deterministically.
 SORT_KEYS = [
@@ -435,15 +442,33 @@ SORT_KEYS = [
 ]
 
 
+DEDUP_KEY = ["klifs_kinase_id", "ligand_code"]
+
+
 def deduplicate(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per (uniprot, ligand_code): the first under SORT_KEYS."""
+    """One row per (klifs_kinase_id, ligand_code): the first under SORT_KEYS.
+
+    Keyed on the KLIFS kinase id rather than UniProt so that the two kinase domains of
+    one protein (JAK1/2 and TYK2 JH1 vs JH2, RSK2 N- vs C-terminal) keep one structure
+    each instead of competing for a single (uniprot, ligand) slot.
+    """
     if (df["uniprot"] == "").any():
-        # An empty UniProt would silently merge unrelated kinases into one group.
+        # Not a dedup hazard any more, but every downstream join (BindingDB) is by
+        # UniProt, so a manifest row without one would be silently unusable.
         bad = df.loc[df["uniprot"] == "", "kinase_name"].unique().tolist()
         raise ValueError(f"kinases without a UniProt accession: {bad}")
     cols, asc = zip(*SORT_KEYS)
     ordered = df.sort_values(list(cols), ascending=list(asc), kind="mergesort")
-    return ordered.drop_duplicates(["uniprot", "ligand_code"], keep="first")
+    return ordered.drop_duplicates(DEDUP_KEY, keep="first")
+
+
+def multi_domain_uniprots(kinases: pd.DataFrame, species: str) -> set[str]:
+    """UniProt accessions carrying more than one KLIFS kinase id in `species`, from the
+    FULL kinase_information table -- a second domain counts even if it has no structure.
+    """
+    k = kinases[(kinases["species"] == species) & kinases["uniprot"].fillna("").ne("")]
+    n = k.groupby("uniprot")["kinase_ID"].nunique()
+    return set(n[n > 1].index)
 
 
 def build_manifest(norm: pd.DataFrame, get_rcsb, *, species: str, exclude: list[str],
@@ -462,7 +487,7 @@ def build_manifest(norm: pd.DataFrame, get_rcsb, *, species: str, exclude: list[
     funnel += rcsb_funnel
     # Deduplicate LAST, over RCSB-validated rows only (see module docstring).
     manifest = deduplicate(kept)
-    funnel.append(_counts("deduplicate (uniprot, ligand_code)", manifest))
+    funnel.append(_counts("deduplicate (klifs_kinase_id, ligand_code)", manifest))
     return manifest, annotated, funnel
 
 
@@ -482,9 +507,10 @@ def main(argv=None):
     a = p.parse_args(argv)
 
     fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    raw, api_version = fetch_raw()
+    raw, kinases, api_version = fetch_raw()
     a.out.mkdir(parents=True, exist_ok=True)
     raw.to_csv(a.out / "klifs_raw.csv", index=False)
+    kinases.to_csv(a.out / "klifs_kinases.csv", index=False)
 
     cache_path = a.out / "rcsb_cache.json"
     rcsb = {}
@@ -497,6 +523,8 @@ def main(argv=None):
         normalise(raw), get_rcsb, species=a.species, exclude=a.exclude_ligands,
         max_resolution=a.max_resolution, min_quality=a.min_quality)
 
+    manifest["multi_domain_uniprot"] = manifest["uniprot"].isin(
+        multi_domain_uniprots(kinases, a.species))
     manifest = manifest.sort_values(["kinase_name", "ligand_code"])[MANIFEST_COLUMNS]
     manifest.to_csv(a.out / "klifs_manifest.csv", index=False)
 
@@ -515,21 +543,23 @@ def main(argv=None):
         "thresholds": {"species": a.species, "exclude_ligands": a.exclude_ligands,
                        "max_resolution": a.max_resolution, "min_quality": a.min_quality,
                        "altloc": ["A", ""], "rcsb_drop": DROP_STATUSES,
-                       "dedup_key": ["uniprot", "ligand_code"],
+                       "dedup_key": DEDUP_KEY,
                        "dedup_order": [f"{c} {'asc' if s else 'desc'}"
                                        for c, s in SORT_KEYS]},
         "funnel": funnel,
         "rcsb_status_counts_before_drop":
             annotated["rcsb_status"].value_counts().to_dict(),
-        "flag_counts_in_manifest": {f: int(manifest[f].sum()) for f in flags},
+        "flag_counts_in_manifest": {f: int(manifest[f].sum())
+                                    for f in flags + ["multi_domain_uniprot"]},
         "remap_collisions": collisions[["pdb", "pdb_klifs", "chain", "altloc",
                                         "ligand_code", "klifs_structure_id",
                                         "rcsb_status"]].to_dict("records"),
     }, indent=2) + "\n")
 
     for f in funnel:
-        print(f"{f['step']:40} {f['structures']:6} structures  {f['pdb_entries']:6} pdb  "
-              f"{f['kinases']:4} kinases  {f['ligands']:5} ligands", file=sys.stderr)
+        print(f"{f['step']:44} {f['structures']:6} structures  {f['pdb_entries']:6} pdb  "
+              f"{f['kinases']:4} kinases  {f['uniprots']:4} uniprots  "
+              f"{f['ligands']:5} ligands", file=sys.stderr)
     if len(collisions):
         print(f"WARNING: {len(collisions)} rows share (pdb, chain, altloc) after "
               "remapping; listed under remap_collisions in klifs_funnel.json",

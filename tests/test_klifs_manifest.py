@@ -13,7 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from klifs_manifest import (DEFAULT_EXCLUDE, _code, apply_filters,  # noqa: E402
-                            build_manifest, deduplicate, normalise, remap_collisions)
+                            build_manifest, deduplicate, multi_domain_uniprots, normalise,
+                            remap_collisions)
 
 
 def _row(**kw):
@@ -138,13 +139,36 @@ def test_funnel_counts_each_step():
 
 # --- deduplication tie-break order --------------------------------------------------
 
-def test_one_row_per_uniprot_ligand_pair():
+def test_one_row_per_kinase_ligand_pair():
     rows = [_row(structure_ID=1, ligand="STI"), _row(structure_ID=2, ligand="STI", pdb="2abc"),
             _row(structure_ID=3, ligand="NIL"),
-            _row(structure_ID=4, ligand="STI", uniprot="P42684", kinase="ABL2")]
+            _row(structure_ID=4, ligand="STI", uniprot="P42684", kinase="ABL2", kinase_ID=393)]
     m = _manifest(rows)
     assert sorted(zip(m["uniprot"], m["ligand_code"])) == [
         ("P00519", "NIL"), ("P00519", "STI"), ("P42684", "STI")]
+
+
+def test_two_domains_of_one_uniprot_keep_one_structure_each():
+    # JAK2 JH1 (kinase id 1) and JH2 pseudokinase (JAK2-b, id 2): one UniProt, two KLIFS
+    # kinases. Under a UniProt key the better-scored JH1 structure would evict JH2's.
+    rows = [_row(structure_ID=1, kinase="JAK2", kinase_ID=1, uniprot="O60674",
+                 ligand="L01", quality_score="9"),
+            _row(structure_ID=2, kinase="JAK2-b", kinase_ID=2, uniprot="O60674",
+                 ligand="L01", quality_score="7", pdb="2abc"),
+            _row(structure_ID=3, kinase="JAK2", kinase_ID=1, uniprot="O60674",
+                 ligand="L01", quality_score="8", pdb="3abc")]
+    m = _manifest(rows)
+    assert sorted(zip(m["kinase_name"], m["klifs_structure_id"])) == [("JAK2", 1), ("JAK2-b", 2)]
+
+
+def test_multi_domain_uniprots_uses_the_full_kinase_list():
+    kinases = pd.DataFrame({
+        "kinase_ID": [1, 2, 3, 4, 5],
+        "uniprot": ["O60674", "O60674", "P00519", "Q99999", None],
+        "species": ["Human", "Human", "Human", "Mouse", "Human"]})
+    # O60674 counts even if only one of its domains has a structure: this table is
+    # kinase_information, not the structure list.
+    assert multi_domain_uniprots(kinases, "Human") == {"O60674"}
 
 
 def test_quality_beats_resolution():
@@ -303,7 +327,7 @@ def test_each_rcsb_drop_is_its_own_funnel_step():
     assert by_step["rcsb: drop ligand_missing"] == 3
     assert by_step["rcsb: drop non_xray"] == 2
     assert by_step["rcsb: drop obsolete_remapped"] == 1
-    assert by_step["deduplicate (uniprot, ligand_code)"] == 1
+    assert by_step["deduplicate (klifs_kinase_id, ligand_code)"] == 1
 
 
 def test_rcsb_drop_happens_before_dedup_so_runner_up_wins():
