@@ -28,3 +28,4 @@ githubrepodvcs-*.json
 # Claude Code: settings.json is shared project config and IS tracked. The .local
 # variant is per-machine permission grants -- noise for anyone else, so it is not.
 .claude/settings.local.json
+/data
