@@ -5,7 +5,7 @@ The paper's protocol, verbatim:
     "we randomly shuffle the protein sequence and then repack the resulting sequence
      onto the backbone that is provided without perturbing the backbone coordinates
      within each protein chain to make sure that only the side chains are re-packed.
-     A short Monte-Carlo relaxation is then performed to better eliminate many of the
+     A short Monte-Carlo relaxation is then performed to better elbiminate many of the
      possible side-chain clashes with the backbone fixed."
 
 and, critically, for the native reference:

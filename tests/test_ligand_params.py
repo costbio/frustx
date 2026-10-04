@@ -22,6 +22,7 @@ from frustx.ligand_params import (
     real_heavy_atom_count,
     single_mutable_type,
     ligands_setting,
+    uniquify_ligand_atom_names,
 )
 
 pyrosetta = pytest.importorskip("pyrosetta")
@@ -380,3 +381,76 @@ def test_a_ligand_placed_from_the_wrong_frame_silently_makes_no_contacts(
                           xyz.x + 100.0, xyz.y, xyz.z))
 
     assert _ligand_contacts(moved, index) == 0
+
+
+# ------------------------------------------------- degenerate HETATM atom names
+
+
+def _hetatm(serial, name, element, chain="A", resseq=1, resname="UNL"):
+    """One HETATM record with every field in its PDB column, built by hand."""
+    return (f"HETATM{serial:>5} {name:<4} {resname:>3} {chain}{resseq:>4}    "
+            f"{0.0:>8.3f}{0.0:>8.3f}{0.0:>8.3f}  1.00  0.00          {element:>2}")
+
+
+def _names(text, chain="A"):
+    return [line[12:16].strip() for line in text.splitlines()
+            if line.startswith("HETATM") and line[21] == chain]
+
+
+def test_bare_element_atom_names_are_made_unique():
+    """The docking-output case: every carbon named "C".
+
+    This is not cosmetic. Rosetta matches these records to the SDF-derived residue type
+    by geometry, and with nothing to tell the atoms apart the search either dies in
+    fill_missing_atoms or does not terminate at all -- 1800 s per ligand, no output.
+    """
+    text = "\n".join([_hetatm(1, "C", "C"), _hetatm(2, "C", "C"),
+                      _hetatm(3, "O", "O"), _hetatm(4, "C", "C")]) + "\n"
+
+    assert _names(uniquify_ligand_atom_names(text, "UNL")) == ["C1", "C2", "O1", "C3"]
+
+
+def test_columns_survive_the_rename():
+    """A shifted column would corrupt coordinates far more quietly than a crash."""
+    before = _hetatm(1, "C", "C")
+    after = uniquify_ligand_atom_names(
+        "\n".join([before, _hetatm(2, "C", "C")]) + "\n", "UNL").splitlines()[0]
+
+    assert after[16:] == before[16:], "everything right of the atom name is untouched"
+    assert after[:12] == before[:12], "serial and record name are untouched"
+    assert len(after) == len(before)
+
+
+def test_names_that_are_already_unique_are_left_alone():
+    """Unique-but-mismatched names are what remap_pdb_atom_names exists to resolve.
+
+    An SDF carries no PDB names, so Rosetta invents C1/C2/... while the structure says
+    C13/O2. That mismatch is handled correctly and quickly; only duplicates are fatal,
+    so renaming here would discard a curated naming for no gain.
+    """
+    text = "\n".join([_hetatm(1, "C13", "C"), _hetatm(2, "O2", "O")]) + "\n"
+
+    assert uniquify_ligand_atom_names(text, "UNL") == text
+
+
+def test_each_copy_of_a_ligand_is_numbered_from_one():
+    """Two copies in different chains are two residues, each matched against the same
+    residue type -- so the second must not continue the first one's count."""
+    text = "\n".join([_hetatm(1, "C", "C", chain="A"), _hetatm(2, "C", "C", chain="A"),
+                      _hetatm(3, "C", "C", chain="B"), _hetatm(4, "C", "C", chain="B")]) + "\n"
+    out = uniquify_ligand_atom_names(text, "UNL")
+
+    assert _names(out, "A") == ["C1", "C2"]
+    assert _names(out, "B") == ["C1", "C2"]
+
+
+def test_only_the_named_ligand_is_touched():
+    """A second ligand, and the protein, must not be renumbered as collateral."""
+    text = "\n".join([_hetatm(1, "C", "C", resname="UNL"),
+                      _hetatm(2, "C", "C", resname="UNL"),
+                      _hetatm(3, "C", "C", resname="ATP", resseq=2),
+                      _hetatm(4, "C", "C", resname="ATP", resseq=2)]) + "\n"
+    out = uniquify_ligand_atom_names(text, "UNL").splitlines()
+
+    assert [l[12:16].strip() for l in out[:2]] == ["C1", "C2"]
+    assert [l[12:16].strip() for l in out[2:]] == ["C", "C"]

@@ -41,7 +41,8 @@ from __future__ import annotations
 
 import hashlib
 import string
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -486,6 +487,57 @@ def append_ligand(pose, residue_type, chain=None, number=1):
     return index
 
 
+def uniquify_ligand_atom_names(pdb_text, name3):
+    """Give each HETATM atom of residue `name3` a unique PDB atom name.
+
+    Docking and co-folding programs routinely write a ligand's atom names as the bare
+    element symbol, so all 14 carbons of cis-stilbene arrive named "C". Rosetta then has
+    to establish the HETATM-to-residue-type correspondence from geometry alone
+    (`remap_pdb_atom_names`, set in `prepared_mutable`), and duplicate names leave that
+    search nothing to anchor on. Measured over the 98-complex COX docking set, the cost
+    scales with how little the names distinguish atoms:
+
+        4-6 distinct names  ->  loads in ~1.5 s
+        3 distinct names    ->  RuntimeError: too many tries in fill_missing_atoms!
+        1-2 distinct names  ->  does not terminate; killed at 1800 s having produced
+                                nothing (cis-stilbene, every atom named "C")
+
+    All 98 of those inputs carried duplicate names, so for docked input this is the
+    normal case rather than an edge case.
+
+    Ligands whose names are already unique are left alone, even when those names
+    disagree with the residue type's own. That mismatch is precisely what
+    `remap_pdb_atom_names` exists to resolve, and it resolves it quickly -- it is only
+    the degeneracy that is fatal.
+    """
+    lines = pdb_text.splitlines()
+    copies = {}
+    for line in lines:
+        if line.startswith("HETATM") and line[17:20].strip() == name3:
+            # Chain plus residue sequence number and insertion code: one ligand copy.
+            copies.setdefault((line[21], line[22:27]), []).append(line[12:16].strip())
+    degenerate = {key for key, names in copies.items() if len(set(names)) < len(names)}
+    if not degenerate:
+        return pdb_text
+
+    # Numbering restarts per copy, so a second copy of the same ligand is named the same
+    # way as the first rather than continuing its count.
+    counts = Counter()
+    renamed = []
+    for line in lines:
+        key = (line[21], line[22:27]) if len(line) > 26 else None
+        if line.startswith("HETATM") and line[17:20].strip() == name3 and key in degenerate:
+            # Columns 77-78 are the element. Two of the 98 COX inputs leave that field
+            # blank, so fall back to the alphabetic part of the existing atom name.
+            element = (line[76:78].strip()
+                       or "".join(c for c in line[12:16] if c.isalpha())).upper()
+            counts[key, element] += 1
+            name = f"{element}{counts[key, element]}"
+            line = line[:12] + f"{name:<4}" + line[16:]
+        renamed.append(line)
+    return "\n".join(renamed) + "\n"
+
+
 def load_pose_with_ligands(structure, specs, warn=None):
     """Load a structure whose ligands are typed from user-supplied files.
 
@@ -505,13 +557,41 @@ def load_pose_with_ligands(structure, specs, warn=None):
     """
     import pyrosetta
 
-    pose_set, report = build_residue_type_set(specs, warn=warn)
+    # Docking programs commonly write every hit as UNL or LIG. Those placeholder
+    # codes are treated specially by Rosetta's PDB component lookup and are dropped
+    # before a custom pose residue type can match them. Give such topology ligands a
+    # private, collision-free code in the in-memory PDB and in the registered type.
+    # This preserves the docking coordinates without modifying the user's PDB.
+    prepared_specs = []
+    pdb_text = Path(structure).read_text()
+    for index, spec in enumerate(specs, start=1):
+        if spec.mode == "topology" and spec.name3.upper() in {"UNL", "LIG"}:
+            code = f"X{index:02d}"
+            pdb_text = "\n".join(
+                (line[:17] + code + line[20:])
+                if line.startswith(("ATOM  ", "HETATM")) and line[17:20].strip() == spec.name3
+                else line
+                for line in pdb_text.splitlines()
+            ) + "\n"
+            spec = replace(spec, name=code, name3=code)
+        if spec.mode == "topology":
+            # After the code rewrite above, so it matches the records as they now read.
+            # _names_of_file supplies the code the file itself declares when the user
+            # passed no --ligand-name3.
+            pdb_text = uniquify_ligand_atom_names(pdb_text, _names_of_file(spec)[1])
+        prepared_specs.append(spec)
+
+    pose_set, report = build_residue_type_set(prepared_specs, warn=warn)
 
     pose = pyrosetta.rosetta.core.pose.Pose()
     pose.conformation().reset_residue_type_set_for_conf(pose_set)
-    pyrosetta.rosetta.core.import_pose.pose_from_file(
-        pose, str(structure), False,
-        pyrosetta.rosetta.core.import_pose.FileType.PDB_file,
+    # The normal FrustX init disables CCD component loading so unknown HETATM
+    # records are dropped from protein-only inputs. Here the ligand residue types
+    # have already been registered on this pose, so the PDB importer must be told
+    # to retain those HETATM records; otherwise a docked UNL residue disappears
+    # before topology-mode matching can see it.
+    pyrosetta.rosetta.core.import_pose.pose_from_pdbstring(
+        pose, pdb_text, str(structure),
     )
 
     present = {pose.residue_type(i).name() for i in range(1, pose.total_residue() + 1)}

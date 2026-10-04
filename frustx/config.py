@@ -64,7 +64,7 @@ DEFAULT_BACKGROUND_WEIGHT = 0.0
 #   "neighbourhood" E_ij plus every other contact energy touching i or j.
 #
 # "neighbourhood" exists because it is what frustratometeR actually sums. Its mutational
-# decoy energy is not a pair energy at all: fix_backbone.cpp:5214-5243 sums
+# de ne.cpp:5214-5243 sums
 # water(i,j) + burial_i + burial_j + sum_k water(i,k) + sum_k water(j,k). Comparing
 # FrustX's bare pair energy against that is a scope mismatch, not just a force-field
 # difference, and it is the single largest identified driver of the two tools'
@@ -77,8 +77,8 @@ DEFAULT_BACKGROUND_WEIGHT = 0.0
 # See "Readout scope" in docs/method.md.
 DEFAULT_READOUT = "pair"
 READOUT_SCOPES = ("pair", "neighbourhood")
-
-
+ 
+ 
 # --- Ligand contact cutoff ----------------------------------------------------------
 #
 # A ligand has no CA and no CB, so the paper's Ca-Ca criterion is not merely inaccurate

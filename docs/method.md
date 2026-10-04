@@ -37,7 +37,7 @@ interaction involving i**, plus **half of every one involving j**. Per the paper
 
 **This is the step the earlier `FrustX.py` prototype was missing** — it used the total
 system potential energy, in which a single side-chain change is far below the noise.
-
+ 
 ## 3. Energy function
 
 **Rosetta REF2015**, all-atom. *"we employed the REF2015 version of the rosetta energy
@@ -3041,3 +3041,106 @@ Ligand-flexible decoys and conformer libraries (decoys shuffle amino-acid identi
 a ligand relaxing into a shuffled pocket answers a different question); covalent-ligand
 bookkeeping; `.mol2` input (Rosetta's reader returns an empty result for it and raises
 nothing, so it is refused by extension); RDKit/OpenBabel as dependencies.
+
+## COX-1/COX-2 selectivity: the signal is contact count, not frustration
+
+49 NSAIDs/coxibs, each docked separately into 1EQG (COX-1) and 3LN1 (COX-2), scored at
+`--protocol relax -n 1000`, `w=0`, `--ligand-cutoff 6.0`, ligand frozen. Labels
+(32 Selective / 17 Non-Selective) and a docking ΔΔG come from
+`data/COX_Docking_Selectivity_Scores_Table.xlsx`. Because the chemistry is shared across
+the two targets but the pose is not, every run used `--ligand-placed`.
+
+The per-contact index is reduced to a ligand-interface descriptor per run
+(`scripts/cox_selectivity.py`), then differenced COX2 − COX1 per inhibitor. All 98 runs
+were checked to agree on `protocol`, `n_decoys`, `background_weight`, `readout`,
+`cutoff`, `ligand_cutoff`, `contact_atom`, `min_seq_sep` — these set the *scale* of
+Eq. 1's Z-score, so a ΔΔF across mismatched settings is not a number. The collation
+script refuses to difference runs that disagree.
+
+### Two descriptors that are identically zero, by construction
+
+`frustration_index_specific` is the OLS residual against per-residue coefficients, so by
+the normal equations it **sums to exactly zero over any one residue's contacts**. The
+ligand is one residue. Its mean specific frustration is therefore 0 in every run, for
+every inhibitor:
+
+```
+cox1_celecoxib  ligand residual sum: 1.5e-14   (std 0.62)
+cox1_celecoxib  res120 residual sum: -8.7e-15
+```
+
+Only the *spread* carries information. The same identity makes
+`mean(frustration_index_onebody)` equal `mean(frustration_index)` to machine precision
+over a ligand interface, so reporting both is reporting one twice. Anyone aggregating a
+per-contact index over a single residue's contacts hits this — it is a property of
+`additivity.py`, not of this dataset.
+
+### A data-hygiene check that should have run first
+
+Three of the 49 inhibitors were **chemically different molecules** in the two targets,
+because MolModa emitted invalid connectivity for the COX-1 pose:
+
+```
+l-804600  cox1 C21H24N2O4S  vs cox2 C21H22N2O4S   sulfonyl detached: S with S-H@1.36,
+                                                   one O instead of two, O-O@1.24,
+                                                   ring C 2.47 A from S
+l-768277  cox1 C17H13N3O2S2 vs cox2 C17H16N2O2S2  a nitrogen lost
+sc-58125  cox1 C17H14F4N2O2S vs cox2 C17H12F4N2O2S pyrazole aromaticity lost
+```
+
+`l-804600` was the only one that *failed loudly* — Rosetta's `Cannot reroot a
+disconnected ResidueType`, because the SDF bond block left `{C,S,H}` as a separate
+fragment. The other two **ran to completion and produced plausible numbers** while
+comparing two different molecules across the two targets. A crash is the lucky case.
+
+The cheap check that catches all three: the cox1 and cox2 files of one inhibitor must
+give the **identical canonical SMILES**. Formula equality is weaker and misses
+bond-order and stereo defects; scanning for disconnected fragments alone misses
+`sc-58125`. Two pairs still differ in stereochemistry / bond-order perception only
+(`pd-138387`, `sulindac-sulfide`) and are carried, with a `--exclude` sensitivity run.
+
+Note also that `obabel -h -p 7.4` silently ignores `-p`: Open Babel applies the
+hydrogen-add and drops the pH model, so these ligands are neutral (carboxylic acids
+protonated). `-p 7.4` *alone* deprotonates and emits `M CHG` — verified on ibuprofen,
+C13H18O2 neutral vs C13H17O2 at −1. All 49 ligands carry no formal charge.
+
+### Result
+
+`scripts/cox_selectivity_stats.py`, rank AUC with a 20000-draw label permutation test
+(no scipy dependency; a normal approximation is thin at 32 vs 17), Benjamini-Hochberg
+across the nine descriptors:
+
+```
+n = 49 (32 Selective / 17 Non-Selective)
+
+BASELINE  docking ddG                       AUC 0.823  p 0.0001
+
+descriptor          raw AUC   -dock    -dock-contacts
+d_n_minimally         0.869   0.735 (p 0.007)   0.638 (p 0.120)
+d_n_ligand_contacts   0.854   0.728 (p 0.009)   --
+d_sum_frustration     0.847   0.719 (p 0.012)   0.619 (p 0.176)
+d_mean_frustration    0.816   0.693 (p 0.027)   0.612 (p 0.202)
+```
+
+The direction matches the hypothesis — selective compounds gain 3.9 minimally
+frustrated contacts on the COX-2 side, non-selective ones lose 2.1 — and the raw
+separation is strong. It does not survive the controls. Docking ΔΔG is already a 0.82
+predictor, and once *both* it and the ligand contact count are regressed out, every
+descriptor sits at 0.61–0.64 with nothing significant (q ≥ 0.12). Excluding the two
+stereo-mismatched pairs gives the same picture at n=47 (0.61–0.64, p 0.12–0.25).
+
+The decisive comparison is that `d_n_ligand_contacts` **alone** scores 0.854 raw and
+0.728 after the docking adjustment — as good as any frustration descriptor. The whole
+signal reduces to *COX-2-selective inhibitors make more protein contacts in COX-2 than
+in COX-1*, which is a statement about the larger side pocket, obtainable from
+`contacts.py` without generating a single decoy. 98 × 1000 REF2015 decoys add nothing
+measurable on top of it.
+
+This is a negative result about **frustration aggregated over a ligand interface**, not
+about selectivity. The aggregate discards which contacts changed, and the paper's unit
+is the contact. The open question is residue-resolved: whether selective ligands form
+minimally frustrated contacts with the COX-2 side-pocket residues (Val523, vs Ile523 in
+COX-1, and 513/352) that are absent or frustrated in COX-1.
+
+Do not add descriptors to this table without a reason beyond significance-hunting; nine
+were tested and the BH correction is already carrying them.
