@@ -10,6 +10,8 @@ Output, under data/kinome/bindingdb/:
 
     raw/BindingDB_All_<YYYYMM>_tsv.zip   the release, verified against its published md5
     chemcomp_cache.json                   RCSB chem_comp InChIKey/SMILES per ligand code
+    uniprot_cache.json                    UniProt kinase-domain spans + sequences of the
+                                          proteins KLIFS splits into two kinase domains
     ligand_ids.csv                        ligand_code -> group, InChIKey, match level, HET check
     activities.csv                        per (uniprot, InChIKey, measure): median pX, n, std...
                                           match levels `full` and `bindingdb_no_stereo`
@@ -42,6 +44,10 @@ against the file rather than assumed:
     (second block "UHFFFAOYSA"): ruxolitinib, staurosporine, axitinib, lestaurtinib all
     sit there, while RCSB's keys carry stereo. BindingDB's own HET-id column confirms
     these are the same compounds. Hence the `bindingdb_no_stereo` match level.
+  - Target names often carry the construct's residue range ("JAK2 [808-1132]", "TYK2
+    [556-888]", "(aa658-end)", several ranges for deletion mutants). For proteins KLIFS
+    splits into two kinase domains (JAK1/2/3 and TYK2 JH1/JH2, RSK/MSK N/C) that range
+    says which domain was measured; see assign_domains().
 
 Structure follows scripts/klifs_manifest.py: network code apart from pure functions,
 which tests/test_bindingdb_activity.py exercises offline.
@@ -74,6 +80,19 @@ BINDING_CONSTANTS = ["Kd", "Ki"]    # never pooled with IC50, nor with each othe
 INCONSISTENT_STD = 1.0              # log units
 NO_STEREO_BLOCK = "UHFFFAOYSA"      # InChIKey 2nd block of a structure with no stereo layer
 MAIN_LEVELS = ["full", "bindingdb_no_stereo"]   # what activities.csv holds
+# domain_source values whose kinase domain is known from the measurement itself (one
+# KLIFS kinase on the protein, or the construct's residue range), not inferred from
+# where the ligand happens to have been crystallised.
+PRIMARY_SOURCES = ["single_domain", "construct"]
+
+UNIPROT_REST = "https://rest.uniprot.org/uniprotkb/{}.json?fields=ft_domain,sequence"
+# A construct belongs to a kinase domain if its residue range(s) cover >= 80% of that
+# domain and of no other one (task specification).
+MIN_CONSTRUCT_COVERAGE = 0.8
+# Locating a KLIFS pocket in the UniProt sequence: only exact, unique substrings of at
+# least this many residues count, and at least this fraction of the pocket must be found.
+MIN_POCKET_SEGMENT = 5
+MIN_POCKET_LOCATED = 0.5
 
 COLUMNS = {
     "reactant_set_id": "BindingDB Reactant_set_id",
@@ -198,6 +217,33 @@ def fetch_chemcomps(codes: list[str], cache_path: Path, refresh: bool = False) -
     return cache
 
 
+def fetch_uniprot(accessions: list[str], cache_path: Path, refresh: bool = False) -> dict:
+    """{"entries": {acc: {"sequence", "crc64", "kinase_domains": [{description, start,
+    end}]}}, "fetched_at"}: UniProt's "Protein kinase" Domain features (1-based,
+    inclusive) and the canonical sequence. Only accessions missing from the cache go to
+    the network."""
+    cache = {"entries": {}, "fetched_at": None}
+    if cache_path.exists() and not refresh:
+        cache = json.loads(cache_path.read_text())
+    need = sorted(a for a in set(accessions) if a not in cache["entries"])
+    for acc in need:
+        with urllib.request.urlopen(UNIPROT_REST.format(acc), timeout=120) as r:
+            d = json.load(r)
+        cache["entries"][acc] = {
+            "sequence": d["sequence"]["value"], "crc64": d["sequence"].get("crc64"),
+            "kinase_domains": [
+                {"description": f.get("description", ""),
+                 "start": f["location"]["start"]["value"],
+                 "end": f["location"]["end"]["value"]}
+                for f in d.get("features", [])
+                if f["type"] == "Domain"
+                and f.get("description", "").startswith("Protein kinase")]}
+    if need:
+        cache["fetched_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cache_path.write_text(json.dumps(cache, indent=1, sort_keys=True) + "\n")
+    return cache
+
+
 def tsv_lines(zip_path: Path):
     """Lines of the single TSV member, decompressed as a stream (never written out)."""
     z = zipfile.ZipFile(zip_path)
@@ -306,13 +352,14 @@ def scan(lines, kinases: set[str], organisms: list[str], het_codes: set[str],
             "reactant_set_id": r[c["reactant_set_id"]], "inchikey": ik,
             "bindingdb_name": r[c["bindingdb_name"]], "target_name": r[c["target_name"]],
             "organism": organism, "source": r[c["source"]],
-            "pmid": r[c["pmid"]].strip(), "doi": r[c["doi"]].strip(), "n_chains": n,
+            "pmid": r[c["pmid"]].strip(), "doi": r[c["doi"]].strip(), "het": het,
+            "n_chains": n,
             "kinase_uniprots": ";".join(hits),
             **{m: r[c[m]] for m in MEASURES}})
 
     return {"records": pd.DataFrame(records, columns=[
                 "reactant_set_id", "inchikey", "bindingdb_name", "target_name",
-                "organism", "source", "pmid", "doi", "n_chains", "kinase_uniprots",
+                "organism", "source", "pmid", "doi", "het", "n_chains", "kinase_uniprots",
                 *MEASURES]),
             "funnel": [s.counts() for s in stages], "problems": dict(problems),
             "kinase_rows_by_organism": dict(kinase_rows_by_organism),
@@ -386,6 +433,13 @@ def match_ligands(df: pd.DataFrame, groups: pd.DataFrame) -> pd.DataFrame:
                                                            >1 manifest group (enantiomers
                                                            with own codes): not attributable
 
+    HET tie-break: a no_stereo_several_ligands row whose BindingDB HET id ('Ligand HET ID
+    in PDB', column `het` if `df` has it) is one of the codes of the group it is being
+    matched to becomes bindingdb_no_stereo with match_note "het_tiebreak" for that group
+    -- e.g. stereo-less ruxolitinib records with HET RXT go to RXT, not to its enantiomer
+    RG4. An empty HET, or one naming a code outside the candidate groups, decides
+    nothing: the row stays skeleton.
+
     A row appears once per group it matches. Groups without an InChIKey never match.
     """
     g = groups.loc[groups["inchikey"] != "", ["ligand_group", "inchikey"]].drop_duplicates()
@@ -407,6 +461,12 @@ def match_ligands(df: pd.DataFrame, groups: pd.DataFrame) -> pd.DataFrame:
     ok = no_stereo & same_proton & unique
     sk["match_level"] = "skeleton"
     sk.loc[ok, ["match_level", "match_note"]] = ["bindingdb_no_stereo", ""]
+    if "het" in sk:
+        het_in_group = pd.Series(
+            [h != "" and h in grp.split("/") for h, grp in zip(sk["het"], sk["ligand_group"])],
+            index=sk.index, dtype=bool)
+        tie = (sk["match_note"] == "no_stereo_several_ligands") & het_in_group
+        sk.loc[tie, ["match_level", "match_note"]] = ["bindingdb_no_stereo", "het_tiebreak"]
     return pd.concat([full, sk.drop(columns=["_sk", "_lig"])], ignore_index=True)
 
 
@@ -426,7 +486,9 @@ def ligand_table(codes: list[str], groups: pd.DataFrame, chem: dict, seen: set[s
       inchikey_rows_other_het       rows with this ligand's InChIKey but another HET id
                                     (disagreement; rows with no HET id are not counted)
     """
-    seen_levels = match_ligands(pd.DataFrame({"inchikey": sorted(seen)}), groups)
+    # (HET, InChIKey) pairs as well as bare keys, so the HET tie-break applies here too
+    probe = pd.concat([het_pairs, pd.DataFrame({"het": "", "inchikey": sorted(seen)})])
+    seen_levels = match_ligands(probe.drop_duplicates(), groups)
     best = (seen_levels.assign(r=seen_levels["match_level"].map(LEVEL_RANK))
             .groupby("ligand_group")["r"].min()
             .map({v: k for k, v in LEVEL_RANK.items()}))
@@ -495,50 +557,212 @@ def drop_source_duplicates(long: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return long, dropped
 
 
-AGG_KEYS = ["uniprot", "inchikey", "measure", "ligand_group", "match_level", "match_note"]
+# --- pure logic: kinase domains ----------------------------------------------------
+
+_RANGE = re.compile(r"^(?:aa)?(\d+)\s*[-\u2013]\s*(\d+|end)$", re.IGNORECASE)
 
 
-def aggregate(long: pd.DataFrame) -> pd.DataFrame:
-    """Per (uniprot, InChIKey, measure): median pX and sample std over UNCENSORED values
-    only, n = their count, n_censored = '<'/'>' values (counted, never in the median).
-    inconsistent: std > INCONSISTENT_STD log units (needs n >= 2)."""
-    v = long[long["valid"]]
-    unc = v[~v["censored"]].groupby(AGG_KEYS)["pX"]
-    out = pd.DataFrame({
-        "multichain_target": v.groupby(AGG_KEYS)["multichain_target"].any(),
-        "n": unc.size(), "median_pX": unc.median(), "std": unc.std(ddof=1),
-        "n_censored": v[v["censored"]].groupby(AGG_KEYS).size()})
-    out["n"] = out["n"].fillna(0).astype(int)
-    out["n_censored"] = out["n_censored"].fillna(0).astype(int)
-    out["inconsistent"] = out["std"] > INCONSISTENT_STD
-    return out.reset_index()
+def parse_ranges(target_name: str) -> list[tuple[int, float]]:
+    """Residue ranges of the construct named in a BindingDB target name, as written in
+    the 202610 release: "[808-1132]", "[536-812,V617F]", "(536-812)", "(aa658-end)",
+    "[1-746,750-1210,A750P]" (several ranges: a deletion construct), "[1-775,'YVMA',
+    776-1255]" (an insertion between ranges). Mutations, insertions and labels inside the
+    brackets are ignored; "end" is open (inf). No range -> [] (the full protein)."""
+    out = []
+    for group in re.findall(r"[\[(]([^\[\]()]*)[\])]", target_name):
+        for token in group.split(","):
+            m = _RANGE.match(token.strip())
+            if m:
+                a, b = int(m.group(1)), m.group(2)
+                out.append((a, math.inf if b.lower() == "end" else int(b)))
+    return out
 
 
-def assign_domains(act: pd.DataFrame, manifest: pd.DataFrame,
-                   domains: dict[str, list[int]]) -> pd.DataFrame:
-    """Add klifs_kinase_id, multi_domain_uniprot and domain_ambiguous.
+def domain_coverage(ranges: list[tuple[int, float]], start: int, end: int) -> float:
+    """Fraction of residues start..end (inclusive) covered by the union of `ranges`."""
+    covered = set()
+    for a, b in ranges:
+        covered.update(range(max(a, start), int(min(b, end)) + 1))
+    return len(covered) / (end - start + 1)
 
-    BindingDB measures a protein; KLIFS's unit is a kinase domain. For a UniProt with one
-    KLIFS kinase the id is that kinase. For one with several (JAK1/2/3, TYK2: JH1 and the
-    JH2 pseudokinase; RSK2: N- and C-terminal domains):
-      - the ligand has a manifest structure in exactly one of its domains -> that domain
-      - structures in two or more of its domains -> domain_ambiguous, no id
-      - no structure of this ligand on this protein -> no id; the row stays at UniProt
-        level (an off-target value cannot be pinned to a domain from data we have)
+
+def construct_domain(ranges, spans: dict[int, tuple[int, int]]) -> int | None:
+    """The one KLIFS kinase whose UniProt domain the construct covers by at least
+    MIN_CONSTRUCT_COVERAGE; None if it covers several, or none."""
+    hits = [k for k, (a, b) in spans.items()
+            if domain_coverage(ranges, a, b) >= MIN_CONSTRUCT_COVERAGE]
+    return hits[0] if len(hits) == 1 else None
+
+
+def locate_pocket(pocket: str, sequence: str) -> list[int]:
+    """1-based sequence positions of the KLIFS pocket residues that can be placed
+    without guessing. The 85-residue pocket is a concatenation of sequence segments whose
+    boundaries KLIFS does not mark ('-'/'_' only mark missing residues), so it is walked
+    left to right taking the LONGEST exact substring found in the sequence; a stretch
+    counts only if it is >= MIN_POCKET_SEGMENT long and occurs exactly once in the
+    sequence. Everything else is left unplaced."""
+    pocket = pocket.replace("_", "-")
+    pos, i = [], 0
+    while i < len(pocket):
+        k = 0
+        while (i + k < len(pocket) and pocket[i + k] != "-"
+               and pocket[i:i + k + 1] in sequence):
+            k += 1
+        seg = pocket[i:i + k]
+        if k >= MIN_POCKET_SEGMENT and sequence.count(seg) == 1:
+            j = sequence.index(seg)
+            pos.extend(range(j + 1, j + k + 1))
+            i += k
+        else:
+            i += max(k, 1)
+    return pos
+
+
+def map_klifs_domains(kinases: pd.DataFrame, uniprot: dict) -> tuple[dict, list[dict]]:
+    """KLIFS kinase id -> (start, end) of its UniProt "Protein kinase" domain.
+
+    `kinases`: kinase_ID, name, uniprot, pocket (multi-domain proteins). A kinase is
+    mapped when >= MIN_POCKET_LOCATED of its pocket is placed in the UniProt sequence and
+    EVERY placed residue lies inside one and the same UniProt kinase domain, and no other
+    KLIFS kinase of that protein maps to that domain. Anything else is returned in
+    `unmapped` with the numbers, never resolved by a guess."""
+    spans, unmapped, claimed = {}, [], {}
+    for r in kinases.itertuples(index=False):
+        entry = uniprot.get(r.uniprot)
+        if not entry or not entry["kinase_domains"]:
+            unmapped.append({"kinase_ID": r.kinase_ID, "name": r.name,
+                             "reason": "no UniProt kinase domain features"})
+            continue
+        n_res = len(r.pocket.replace("-", "").replace("_", ""))
+        placed = locate_pocket(r.pocket, entry["sequence"])
+        inside = [d for d in entry["kinase_domains"]
+                  if all(d["start"] <= x <= d["end"] for x in placed)]
+        frac = len(placed) / n_res if n_res else 0.0
+        if frac < MIN_POCKET_LOCATED or len(inside) != 1:
+            unmapped.append({"kinase_ID": r.kinase_ID, "name": r.name,
+                             "reason": "pocket not placed in exactly one domain",
+                             "placed_fraction": round(frac, 2),
+                             "domains_containing_all": [d["description"] for d in inside]})
+            continue
+        d = inside[0]
+        spans[r.kinase_ID] = (d["start"], d["end"])
+        claimed.setdefault((r.uniprot, d["start"]), []).append(r.kinase_ID)
+    for (_, _), ids in claimed.items():
+        if len(ids) > 1:     # two KLIFS kinases on one UniProt domain: trust neither
+            for k in ids:
+                unmapped.append({"kinase_ID": k, "name": "", "reason":
+                                 f"shares a UniProt domain with {sorted(set(ids) - {k})}"})
+                spans.pop(k, None)
+    return spans, unmapped
+
+
+def assign_domains(long: pd.DataFrame, manifest: pd.DataFrame,
+                   domains: dict[str, list[int]],
+                   spans: dict[int, tuple[int, int]]) -> pd.DataFrame:
+    """Per MEASUREMENT (two measurements of one ligand on one protein may come from
+    different constructs): klifs_kinase_id, domain_source, multi_domain_uniprot,
+    domain_ambiguous.
+
+    BindingDB measures a protein (or a construct of it); KLIFS's unit is a kinase domain.
+
+      single_domain        the UniProt has one KLIFS kinase
+    For a UniProt with several (JAK1/2/3, TYK2: JH1 + JH2; RSK, MSK: N- + C-terminal),
+    first the construct, if the target name gives residue ranges (single-chain targets
+    only -- in "Cyclin-A2 [171-432]/CDK2" the range is the cyclin's):
+      construct            ranges cover >= 80% of exactly one domain
+      construct_ambiguous  ranges cover both domains, or neither
+    then, only for rows WITHOUT ranges (the full protein), where the ligand's crystal is:
+      structure            ligand has a manifest structure in exactly one domain
+      structure_ambiguous  ... in several
+      uniprot_level        ... in none: the row stays at protein level, no id
+    The construct rule needs every domain of the protein mapped (map_klifs_domains);
+    if one is not, ranged rows fall through to the structure rule.
+
+    Also kept, for reporting what the construct rule changed: structure_rule_kinase_id
+    and structure_rule_ambiguous -- what the structure rule alone would have said.
     """
     structured = manifest.groupby(["uniprot", "ligand_group"])["klifs_kinase_id"].agg(
         lambda s: sorted(set(s)))
-    kid, amb, multi = [], [], []
-    for u, g in zip(act["uniprot"], act["ligand_group"]):
+    ranges_of = {t: parse_ranges(t) for t in long["target_name"].unique()}
+    def one(u, g, t, n):
+        """-> (kinase id, domain_source, structure-rule id, structure-rule ambiguous)"""
         ids = domains.get(u, [])
-        multi.append(len(ids) > 1)
-        s = ids if len(ids) == 1 else structured.get((u, g), [])
-        kid.append(s[0] if len(s) == 1 else None)
-        amb.append(len(ids) > 1 and len(s) > 1)
-    out = act.copy()
+        if len(ids) == 1:
+            return ids[0], "single_domain", ids[0], False
+        st = structured.get((u, g), [])
+        s_kid = st[0] if len(st) == 1 else None
+        s_src = ("structure" if len(st) == 1 else
+                 "structure_ambiguous" if len(st) > 1 else "uniprot_level")
+        rng = ranges_of[t] if n == 1 else []
+        if rng and ids and all(i in spans for i in ids):
+            k = construct_domain(rng, {i: spans[i] for i in ids})
+            return k, "construct" if k is not None else "construct_ambiguous", s_kid, len(st) > 1
+        return s_kid, s_src, s_kid, len(st) > 1
+
+    res = [one(*row) for row in zip(long["uniprot"], long["ligand_group"],
+                                     long["target_name"], long["n_chains"])]
+    kid, src, old_kid, old_amb = (list(x) for x in zip(*res)) if res else ([], [], [], [])
+    out = long.copy()
     out["klifs_kinase_id"] = pd.array(kid, dtype="Int64")
-    out["multi_domain_uniprot"] = multi
-    out["domain_ambiguous"] = amb
+    out["domain_source"] = src
+    out["multi_domain_uniprot"] = out["domain_source"] != "single_domain"
+    out["domain_ambiguous"] = out["domain_source"].str.endswith("_ambiguous")
+    out["structure_rule_kinase_id"] = pd.array(old_kid, dtype="Int64")
+    out["structure_rule_ambiguous"] = old_amb
+    return out
+
+
+def domain_changes(long: pd.DataFrame) -> dict:
+    """What the construct rule changed, against the structure rule alone, over the
+    multi-domain measurements (valid values, main match levels)."""
+    m = long[long["multi_domain_uniprot"]]
+    new_ok, old_ok = m["klifs_kinase_id"].notna(), m["structure_rule_kinase_id"].notna()
+    kinds = {
+        "rescued_from_ambiguous": m["structure_rule_ambiguous"] & new_ok,
+        "assigned_from_uniprot_level": ~old_ok & ~m["structure_rule_ambiguous"] & new_ok,
+        "reassigned_other_domain": old_ok & new_ok
+                                   & (m["klifs_kinase_id"] != m["structure_rule_kinase_id"]),
+        "now_ambiguous": ~m["structure_rule_ambiguous"] & m["domain_ambiguous"],
+    }
+    out = {}
+    for name, mask in kinds.items():
+        d = m[mask.fillna(False)]
+        out[name] = {"values": len(d), "proteins": int(d["uniprot"].nunique()),
+                     "ligand_groups": int(d["ligand_group"].nunique()),
+                     "by_protein": d.groupby("uniprot").size().to_dict(),
+                     "ligand_groups_list": sorted(d["ligand_group"].unique())[:50]}
+    return out
+
+
+def primary_eligible(domain_source: pd.Series) -> pd.Series:
+    """True where the measured domain is known from the measurement (PRIMARY_SOURCES);
+    False for structure (inferred from the crystal), uniprot_level and *_ambiguous."""
+    return domain_source.isin(PRIMARY_SOURCES)
+
+
+AGG_KEYS = ["uniprot", "klifs_kinase_id", "domain_source", "inchikey", "measure",
+            "ligand_group", "match_level", "match_note"]
+
+
+def aggregate(long: pd.DataFrame) -> pd.DataFrame:
+    """Per (uniprot, kinase domain, domain_source, InChIKey, measure): median pX and
+    sample std over UNCENSORED values only, n = their count, n_censored = '<'/'>' values
+    (counted, never in the median). inconsistent: std > INCONSISTENT_STD log units (needs
+    n >= 2). domain_source is part of the key, so a value measured on an isolated
+    construct is never pooled with one measured on the full protein."""
+    v = long[long["valid"]]
+    by = lambda d: d.groupby(AGG_KEYS, dropna=False)  # noqa: E731  (unassigned id = NA)
+    unc = by(v[~v["censored"]])["pX"]
+    out = pd.DataFrame({
+        "multichain_target": by(v)["multichain_target"].any(),
+        "n": unc.size(), "median_pX": unc.median(), "std": unc.std(ddof=1),
+        "n_censored": by(v[v["censored"]]).size()})
+    out["n"] = out["n"].fillna(0).astype(int)
+    out["n_censored"] = out["n_censored"].fillna(0).astype(int)
+    out["inconsistent"] = out["std"] > INCONSISTENT_STD
+    out = out.reset_index()
+    out["multi_domain_uniprot"] = out["domain_source"] != "single_domain"
+    out["domain_ambiguous"] = out["domain_source"].str.endswith("_ambiguous")
     return out
 
 
@@ -576,24 +800,33 @@ def coverage(act: pd.DataFrame, manifest: pd.DataFrame, names: dict) -> dict:
     per["structured_with_kd_ki"] = [len(structured.get(g, set()) & kd_ids.get(g, set()))
                                     for g in per.index]
 
-    # The comparable set: >= 2 different kinase domains with a co-crystal structure of
-    # this ligand in the manifest AND a Kd or Ki assigned to each of them.
-    # same_measure_max: the most of those kinases sharing one measure (all Kd, or all Ki).
-    comparable = []
+    # The comparable set: a co-crystal structure of this ligand in the manifest AND a Kd
+    # or Ki assigned to the same kinase domain, for >= 2 DIFFERENT PROTEINS (UniProt).
+    # Two domains of one protein (JAK2 JH1 / JAK2-b JH2) are not selectivity; such pairs
+    # are listed apart as intra_protein_domain_pairs, whether or not the ligand is also
+    # comparable across proteins.
+    # same_measure_max: the most of those proteins sharing one measure (all Kd, or all Ki).
+    label = lambda d: "/".join(sorted(set(d["measure"]))) + ":" + "/".join(  # noqa: E731
+        sorted(set(d["match_level"]), key=LEVEL_RANK.get))
+    comparable, intra = [], []
     for grp, kins in structured.items():
         have = assigned(kdki)
         have = have[(have["ligand_group"] == grp) & have["klifs_kinase_id"].isin(kins)]
-        if have["klifs_kinase_id"].nunique() < 2:
+        for u, d in have.groupby("uniprot"):
+            if d["klifs_kinase_id"].nunique() >= 2:
+                intra.append({"ligand_group": grp, "uniprot": u,
+                              "domains": sorted(f"{names.get(int(k), k)}({label(x)})"
+                                                for k, x in d.groupby("klifs_kinase_id"))})
+        if have["uniprot"].nunique() < 2:
             continue
-        label = lambda d: "/".join(sorted(set(d["measure"]))) + ":" + "/".join(  # noqa: E731
-            sorted(set(d["match_level"]), key=LEVEL_RANK.get))
         comparable.append({
-            "ligand_group": grp, "n_kinases": int(have["klifs_kinase_id"].nunique()),
-            "same_measure_max": int(have.groupby("measure")["klifs_kinase_id"].nunique().max()),
+            "ligand_group": grp, "n_proteins": int(have["uniprot"].nunique()),
+            "n_domains": int(have["klifs_kinase_id"].nunique()),
+            "same_measure_max": int(have.groupby("measure")["uniprot"].nunique().max()),
             "match_levels": sorted(set(have["match_level"]), key=LEVEL_RANK.get),
             "kinases": sorted(f"{names.get(int(k), k)}({label(d)})"
                               for k, d in have.groupby("klifs_kinase_id"))})
-    comparable.sort(key=lambda d: (-d["n_kinases"], d["ligand_group"]))
+    comparable.sort(key=lambda d: (-d["n_proteins"], d["ligand_group"]))
 
     top = per.sort_values(["kinases_any", "kinases_kd_ki"], ascending=False).head(20)
     return {
@@ -610,6 +843,7 @@ def coverage(act: pd.DataFrame, manifest: pd.DataFrame, names: dict) -> dict:
         "comparable_ligands_same_measure": sum(d["same_measure_max"] >= 2
                                                for d in comparable),
         "comparable": comparable,
+        "intra_protein_domain_pairs": intra,
         "top20_by_kinases_measured": top.reset_index(names="ligand_group").to_dict("records"),
     }
 
@@ -625,6 +859,7 @@ def main(argv=None):
     p.add_argument("--out", type=Path, default=Path("data/kinome/bindingdb"))
     p.add_argument("--organisms", nargs="+", default=DEFAULT_ORGANISMS)
     p.add_argument("--refresh-chemcomp", action="store_true")
+    p.add_argument("--refresh-uniprot", action="store_true")
     a = p.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -650,6 +885,12 @@ def main(argv=None):
          for c in codes]))
     manifest["ligand_group"] = manifest["ligand_code"].map(
         groups.set_index("ligand_code")["ligand_group"])
+
+    multi = sorted(u for u, ids in domains.items() if len(ids) > 1)
+    uni = fetch_uniprot(multi, a.out / "uniprot_cache.json", a.refresh_uniprot)
+    spans, unmapped = map_klifs_domains(
+        human.loc[human["uniprot"].isin(multi), ["kinase_ID", "name", "uniprot", "pocket"]],
+        uni["entries"])
 
     s = scan(tsv_lines(zip_path), kinases, a.organisms, set(codes),
              {k[:14] for k in groups["inchikey"] if k})
@@ -678,15 +919,22 @@ def main(argv=None):
                         "invalid": int((~long["valid"] & (long["match_level"] == lv)).sum())}
                    for lv in LEVEL_RANK}
 
-    act = assign_domains(aggregate(long), manifest, domains)
+    long = assign_domains(long, manifest, domains, spans)
+    act = aggregate(long)
     act["kinase_name"] = [names[int(k)] if pd.notna(k) else uniprot_names.get(u, u)
                           for k, u in zip(act["klifs_kinase_id"], act["uniprot"])]
-    pairs = set(zip(manifest["uniprot"], manifest["ligand_group"]))
-    act["has_structure"] = [(u, g) in pairs for u, g in zip(act["uniprot"], act["ligand_group"])]
+    # has_structure: at domain level when the row has a domain, else at protein level
+    dom_pairs = set(zip(manifest["klifs_kinase_id"], manifest["ligand_group"]))
+    prot_pairs = set(zip(manifest["uniprot"], manifest["ligand_group"]))
+    act["has_structure"] = [(int(k), g) in dom_pairs if pd.notna(k) else (u, g) in prot_pairs
+                            for k, u, g in zip(act["klifs_kinase_id"], act["uniprot"],
+                                               act["ligand_group"])]
     act["has_klifs_structure"] = act["uniprot"].isin(with_structure)
+    act["primary_eligible"] = primary_eligible(act["domain_source"])
     cols = ["ligand_group", "inchikey", "uniprot", "klifs_kinase_id", "kinase_name",
             "measure", "median_pX", "n", "std", "n_censored", "inconsistent",
-            "multichain_target", "multi_domain_uniprot", "domain_ambiguous",
+            "multichain_target", "multi_domain_uniprot", "domain_source", "domain_ambiguous",
+            "primary_eligible",
             "has_structure", "has_klifs_structure", "match_level", "match_note"]
     act = act.sort_values(["ligand_group", "uniprot", "measure", "match_level"])[cols]
     main_act = act[act["match_level"].isin(MAIN_LEVELS)]
@@ -698,6 +946,17 @@ def main(argv=None):
     lig_ids.to_csv(a.out / "ligand_ids.csv", index=False)
 
     amb = main_act[main_act["domain_ambiguous"]]
+    main_vals = long[long["match_level"].isin(MAIN_LEVELS) & long["valid"]]
+    md = main_vals[main_vals["multi_domain_uniprot"]]
+    jh_no_range = md[md["target_name"].str.contains(r"\bJH[12]\b")
+                     & md["target_name"].map(lambda t: not parse_ranges(t))]
+    checks = {}
+    for acc, constructs in (("O60674", ["[808-1132]", "[536-812]"]),
+                            ("P29597", ["[556-888]", "[871-1187]"])):
+        for c in constructs:
+            k = construct_domain(parse_ranges(c), {i: spans[i] for i in domains[acc]
+                                                   if i in spans})
+            checks[f"{uniprot_names[acc]} {c}"] = names.get(k, None) if k else None
     report = {
         "started_at": started,
         "provenance": {"bindingdb": prov, "download_page": DOWNLOAD_PAGE,
@@ -722,6 +981,19 @@ def main(argv=None):
                              .value_counts().to_dict(),
         "ligand_match_levels": lig_ids["match_level"].value_counts().to_dict(),
         "kinase_rows_by_organism_label": s["kinase_rows_by_organism"],
+        "kinase_domains": {
+            "uniprot_fetched_at": uni.get("fetched_at"),
+            "mapped": {names[k]: {"kinase_ID": k, "uniprot_span": list(v)}
+                       for k, v in sorted(spans.items())},
+            "unmapped": unmapped,
+            "construct_checks": checks,
+            "domain_source_values": main_vals["domain_source"].value_counts().to_dict(),
+            "domain_source_activity_rows": main_act["domain_source"].value_counts().to_dict(),
+            "changes_vs_structure_rule": domain_changes(main_vals),
+            "jh_label_without_range": jh_no_range["target_name"].value_counts().to_dict(),
+            "multichain_ranged_rows_not_parsed": int(
+                ((md["n_chains"] > 1) & md["target_name"].map(lambda t: bool(parse_ranges(t))))
+                .sum())},
         "issues": {
             "ligand_groups_with_several_codes": sorted(
                 g for g in groups["ligand_group"].unique() if "/" in g),
@@ -738,9 +1010,13 @@ def main(argv=None):
                                                         & (manifest["ligand_group"] == g),
                                                         "klifs_kinase_id"]))}
                 for (g, u), d in amb.groupby(["ligand_group", "uniprot"])]},
+        # match levels (full / full + no_stereo) x rows (all / primary_eligible only)
         "coverage": {
-            "full": coverage(main_act[main_act["match_level"] == "full"], manifest, names),
-            "full_and_no_stereo": coverage(main_act, manifest, names)},
+            f"{lv}{'_primary' if prim else ''}": coverage(
+                d[d["primary_eligible"]] if prim else d, manifest, names)
+            for lv, d in (("full", main_act[main_act["match_level"] == "full"]),
+                          ("full_and_no_stereo", main_act))
+            for prim in (False, True)},
     }
     (a.out / "bindingdb_funnel.json").write_text(json.dumps(report, indent=2, default=str) + "\n")
 

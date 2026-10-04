@@ -15,8 +15,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from bindingdb_activity import (COLUMNS, aggregate, assign_domains,  # noqa: E402
-                                coverage, drop_source_duplicates, ligand_groups,
-                                ligand_table, match_ligands, parse_affinity, scan,
+                                construct_domain, coverage, domain_coverage,
+                                drop_source_duplicates, ligand_groups, ligand_table,
+                                locate_pocket, map_klifs_domains, match_ligands,
+                                parse_affinity, parse_ranges, primary_eligible, scan,
                                 single_kinase, to_long, to_px)
 
 CHAIN_FIELDS = [
@@ -71,14 +73,22 @@ def _groups(**codes):
 GROUPS = _groups(STI=STI_IK)
 
 
+# KLIFS kinase ids per UniProt, and UniProt kinase-domain spans (UniProt O60674 and
+# P29597, fetched 2026-10-05: JAK2 545-809 / 849-1124, TYK2 589-875 / 897-1176)
+DOMAINS = {ABL1: [392], SRC: [400], JAK2: [436, 439]}   # JAK2 (JH1), JAK2-b (JH2)
+SPANS = {436: (849, 1124), 439: (545, 809)}
+TYK2_SPANS = {441: (897, 1176), 442: (589, 875)}         # TYK2 (JH1), TYK2-b (JH2)
+NO_MANIFEST = pd.DataFrame(columns=["uniprot", "ligand_group", "klifs_kinase_id"])
+
+
 def _long(lines, groups=GROUPS):
     s = _scan(lines, codes=set(groups["ligand_code"]),
               skeletons={k[:14] for k in groups["inchikey"] if k})
     return to_long(match_ligands(single_kinase(s["records"]), groups))
 
 
-def _pipeline(lines, groups=GROUPS):
-    return aggregate(_long(lines, groups))
+def _pipeline(lines, groups=GROUPS, manifest=NO_MANIFEST):
+    return aggregate(assign_domains(_long(lines, groups), manifest, DOMAINS, SPANS))
 
 
 # --- qualifiers, censoring, pX -----------------------------------------------------
@@ -235,7 +245,8 @@ def test_multichain_target_with_one_kinase_chain_is_kept_and_flagged():
     one = single_kinase(s["records"]).set_index("reactant_set_id")
     assert one.loc["1", "uniprot"] == ABL1 and one.loc["1", "multichain_target"]
     assert not one.loc["2", "multichain_target"]
-    act = aggregate(to_long(match_ligands(one.reset_index(), GROUPS)))
+    long = to_long(match_ligands(one.reset_index(), GROUPS))
+    act = aggregate(assign_domains(long, NO_MANIFEST, DOMAINS, SPANS))
     assert len(act) == 1 and act.iloc[0]["multichain_target"]   # any row multichain
 
 
@@ -274,36 +285,203 @@ def test_kd_ki_ic50_never_pooled():
     assert got == pytest.approx({"Kd": 9.0, "Ki": 8.0, "IC50": 7.0})
 
 
+# --- construct ranges --------------------------------------------------------------
+
+@pytest.mark.parametrize("name, expected", [
+    ("Tyrosine-protein kinase JAK2 [808-1132]", [(808, 1132)]),
+    ("Tyrosine-protein kinase JAK2 [536-812,V617F]", [(536, 812)]),
+    ("Tyrosine-protein kinase JAK2 JH2 WT (536-812)", [(536, 812)]),
+    ("Proto-oncogene tyrosine-protein kinase receptor Ret (aa658-end)", [(658, math.inf)]),
+    ("Epidermal growth factor receptor [1-746,750-1210,A750P]", [(1, 746), (750, 1210)]),
+    ("Receptor tyrosine-protein kinase erbB-2 [1-775,'YVMA',776-1255]", [(1, 775), (776, 1255)]),
+    ("Non-receptor tyrosine-protein kinase TYK2 [580-1182,C936A,C1142A]", [(580, 1182)]),
+    ("Kinase X [100\u2013200]", [(100, 200)]),                       # en dash
+    ("Tyrosine-protein kinase JAK2 [Y1007F,Y1008F]", []),           # mutations only
+    ("Isoform 3 of Ribosomal protein S6 kinase alpha-2 (3)", []),   # isoform label
+    ("Isoform 2 of MAP kinase-interacting kinase (MNK1a)", []),
+    ("Tyrosine-protein kinase JAK2", []),                           # full protein
+])
+def test_parse_ranges(name, expected):
+    assert parse_ranges(name) == expected
+
+
+def test_domain_coverage_uses_the_union_of_ranges():
+    assert domain_coverage([(1, 50), (41, 100)], 1, 100) == 1.0
+    assert domain_coverage([(1, 40)], 1, 100) == 0.4
+    assert domain_coverage([(90, math.inf)], 1, 100) == pytest.approx(0.11)
+
+
+@pytest.mark.parametrize("construct, spans, expected", [
+    ("[808-1132]", SPANS, 436),          # JAK2 JH1
+    ("[536-812]", SPANS, 439),           # JAK2 JH2 (JAK2-b)
+    ("[556-888]", TYK2_SPANS, 442),      # TYK2 JH2
+    ("[871-1187]", TYK2_SPANS, 441),     # TYK2 JH1
+    ("[536-1132]", SPANS, None),         # spans both domains
+    ("[900-1000]", SPANS, None),         # under 80% of either
+    ("[566-1132]", SPANS, None),         # 92% of JH2 and all of JH1: still both
+])
+def test_construct_domain_eighty_percent_rule(construct, spans, expected):
+    assert construct_domain(parse_ranges(construct), spans) == expected
+
+
+def test_construct_just_under_eighty_percent_is_not_enough():
+    # JH1 849-1124 has 276 residues; 80% is 220.8
+    assert construct_domain([(849, 1069)], SPANS) == 436          # 221 residues
+    assert construct_domain([(849, 1068)], SPANS) is None         # 220 residues
+
+
+# --- KLIFS pocket -> UniProt domain ------------------------------------------------
+
+SEQ = ("M" * 10 + "ACDEFGHIKLMNPQRSTVWY" + "G" * 30 +          # domain 1: 11-60
+       "W" * 10 + "YWVTSRQPNMLKIHGFEDCA" + "P" * 30)            # domain 2: 71-120
+UNI = {"Q00001": {"sequence": SEQ, "kinase_domains": [
+    {"description": "Protein kinase 1", "start": 11, "end": 60},
+    {"description": "Protein kinase 2", "start": 71, "end": 120}]}}
+
+
+def _kin(rows):
+    return pd.DataFrame(rows, columns=["kinase_ID", "name", "uniprot", "pocket"])
+
+
+def test_locate_pocket_places_only_long_unique_segments():
+    # two segments of domain 1, a 3-residue stretch (too short) and a missing residue
+    pocket = "ACDEFGH" + "-" + "NPQRST" + "YWV"
+    pos = locate_pocket(pocket, SEQ)
+    assert pos == list(range(11, 18)) + list(range(22, 28))      # ACDEFGH, NPQRST
+
+
+def test_map_klifs_domains_by_pocket_location():
+    spans, unmapped = map_klifs_domains(_kin([
+        (1, "K", "Q00001", "ACDEFGHIKL" + "NPQRSTVW"),            # domain 1
+        (2, "K-b", "Q00001", "YWVTSRQPNM" + "HGFEDC")]), UNI)     # domain 2
+    assert spans == {1: (11, 60), 2: (71, 120)} and unmapped == []
+
+
+def test_pocket_straddling_two_domains_is_reported_not_guessed():
+    spans, unmapped = map_klifs_domains(_kin([
+        (1, "K", "Q00001", "ACDEFGHIKL" + "YWVTSRQPNM")]), UNI)
+    assert spans == {}
+    assert unmapped[0]["reason"] == "pocket not placed in exactly one domain"
+
+
+def test_two_kinases_on_one_uniprot_domain_are_both_unmapped():
+    spans, unmapped = map_klifs_domains(_kin([
+        (1, "K", "Q00001", "ACDEFGHIKL"), (2, "K-b", "Q00001", "MNPQRSTVWY")]), UNI)
+    assert spans == {} and {u["kinase_ID"] for u in unmapped} == {1, 2}
+
+
 # --- domain assignment -------------------------------------------------------------
 
-DOMAINS = {ABL1: [392], JAK2: [436, 439]}              # JAK2 (JH1) and JAK2-b (JH2)
+def _dlong(*rows):
+    """(uniprot, ligand_group, target_name, n_chains) per measurement"""
+    return pd.DataFrame(rows, columns=["uniprot", "ligand_group", "target_name", "n_chains"])
 
 
-def _act(*rows):
-    return pd.DataFrame(rows, columns=["uniprot", "ligand_group"])
+JH2_ONLY = pd.DataFrame({"uniprot": [JAK2], "ligand_group": ["L"], "klifs_kinase_id": [439]})
+BOTH = pd.DataFrame({"uniprot": [JAK2, JAK2], "ligand_group": ["L", "L"],
+                     "klifs_kinase_id": [436, 439]})
 
 
 def test_single_domain_protein_gets_its_kinase_id():
-    out = assign_domains(_act((ABL1, "L1")), pd.DataFrame(
-        columns=["uniprot", "ligand_group", "klifs_kinase_id"]), DOMAINS)
-    assert out.iloc[0]["klifs_kinase_id"] == 392
-    assert not out.iloc[0]["multi_domain_uniprot"] and not out.iloc[0]["domain_ambiguous"]
+    out = assign_domains(_dlong((ABL1, "L", "ABL1 [229-500]", 1)), NO_MANIFEST, DOMAINS, SPANS)
+    assert (out.iloc[0]["klifs_kinase_id"], out.iloc[0]["domain_source"]) == (392, "single_domain")
+    assert not out.iloc[0]["multi_domain_uniprot"]
 
 
-def test_multi_domain_activity_goes_to_the_domain_with_the_structure():
-    manifest = pd.DataFrame({"uniprot": [JAK2, JAK2, JAK2],
-                             "ligand_group": ["JH2BINDER", "BOTH", "BOTH"],
-                             "klifs_kinase_id": [439, 436, 439]})
-    out = assign_domains(_act((JAK2, "JH2BINDER"), (JAK2, "BOTH"), (JAK2, "NOSTRUCT")),
-                         manifest, DOMAINS).set_index("ligand_group")
-    assert out.loc["JH2BINDER", "klifs_kinase_id"] == 439
-    assert not out.loc["JH2BINDER", "domain_ambiguous"]
-    # structures in both domains: ambiguous, no id
-    assert out.loc["BOTH", "domain_ambiguous"] and pd.isna(out.loc["BOTH", "klifs_kinase_id"])
-    # no structure on this protein: left at UniProt level, not ambiguous
-    assert pd.isna(out.loc["NOSTRUCT", "klifs_kinase_id"])
-    assert not out.loc["NOSTRUCT", "domain_ambiguous"]
-    assert out["multi_domain_uniprot"].all()
+def test_construct_rule_comes_before_structure_rule():
+    # the ligand's only crystal is on JH2, but this value was measured on a JH1 construct
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2 [808-1132]", 1)),
+                         JH2_ONLY, DOMAINS, SPANS).iloc[0]
+    assert (out["klifs_kinase_id"], out["domain_source"]) == (436, "construct")
+    assert out["structure_rule_kinase_id"] == 439       # what the old rule would have said
+
+
+def test_structure_rule_only_without_a_range():
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2", 1)),
+                         JH2_ONLY, DOMAINS, SPANS).iloc[0]
+    assert (out["klifs_kinase_id"], out["domain_source"]) == (439, "structure")
+
+
+def test_construct_rescues_a_structure_ambiguous_ligand():
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2 [536-812]", 1),
+                                (JAK2, "L", "Tyrosine-protein kinase JAK2", 1)),
+                         BOTH, DOMAINS, SPANS)
+    assert out["domain_source"].tolist() == ["construct", "structure_ambiguous"]
+    assert out["klifs_kinase_id"].iloc[0] == 439 and pd.isna(out["klifs_kinase_id"].iloc[1])
+    assert out["domain_ambiguous"].tolist() == [False, True]
+
+
+def test_construct_over_both_domains_stays_ambiguous_even_with_one_structure():
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2 [536-1132]", 1)),
+                         JH2_ONLY, DOMAINS, SPANS).iloc[0]
+    assert out["domain_source"] == "construct_ambiguous" and out["domain_ambiguous"]
+
+
+def test_range_of_a_multichain_target_is_not_used():
+    out = assign_domains(_dlong((JAK2, "L", "Other protein [808-1132]/JAK2", 2)),
+                         JH2_ONLY, DOMAINS, SPANS).iloc[0]
+    assert out["domain_source"] == "structure"
+
+
+def test_no_structure_and_no_range_stays_at_protein_level():
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2", 1)),
+                         NO_MANIFEST, DOMAINS, SPANS).iloc[0]
+    assert out["domain_source"] == "uniprot_level" and pd.isna(out["klifs_kinase_id"])
+    assert not out["domain_ambiguous"]
+
+
+def test_unmapped_domain_sends_ranged_rows_to_the_structure_rule():
+    out = assign_domains(_dlong((JAK2, "L", "Tyrosine-protein kinase JAK2 [808-1132]", 1)),
+                         JH2_ONLY, DOMAINS, {436: SPANS[436]}).iloc[0]   # 439 unmapped
+    assert out["domain_source"] == "structure"
+
+
+def test_construct_and_full_protein_values_are_not_pooled():
+    act = _pipeline([_line(chains=(JAK2,), kd="10"), _line(chains=(JAK2,), kd="1000")],
+                    manifest=JH2_ONLY.assign(ligand_group="STI"))
+    assert len(act) == 1 and act.iloc[0]["domain_source"] == "structure"
+    long = _long([_line(chains=(JAK2,), kd="10")])
+    long["target_name"] = ["Tyrosine-protein kinase JAK2 [536-812]"]
+    full = _long([_line(chains=(JAK2,), kd="1000")])
+    full["target_name"] = ["Tyrosine-protein kinase JAK2"]
+    act = aggregate(assign_domains(pd.concat([long, full]),
+                                   JH2_ONLY.assign(ligand_group="STI"), DOMAINS, SPANS))
+    assert sorted(act["domain_source"]) == ["construct", "structure"]   # both JAK2-b, apart
+    assert set(act["klifs_kinase_id"]) == {439}
+
+
+# --- HET tie-break -----------------------------------------------------------------
+
+def _tie(het):
+    m = match_ligands(pd.DataFrame({"inchikey": [RXT_FLAT], "het": [het]}),
+                      _groups(RXT=RXT_IK, RG4=RXT_S))
+    return sorted(zip(m["ligand_group"], m["match_level"], m["match_note"]))
+
+
+def test_het_tiebreak_assigns_to_the_named_code_only():
+    assert _tie("RXT") == [("RG4", "skeleton", "no_stereo_several_ligands"),
+                           ("RXT", "bindingdb_no_stereo", "het_tiebreak")]
+    assert _tie("RG4") == [("RG4", "bindingdb_no_stereo", "het_tiebreak"),
+                           ("RXT", "skeleton", "no_stereo_several_ligands")]
+
+
+@pytest.mark.parametrize("het", ["", "STI"])     # empty, or a code outside the candidates
+def test_het_tiebreak_needs_a_code_of_the_candidate_groups(het):
+    assert [lv for _, lv, _ in _tie(het)] == ["skeleton", "skeleton"]
+
+
+def test_het_tiebreak_never_touches_other_skeleton_cases():
+    # a stated, different stereoisomer stays skeleton even when HET names the code
+    m = match_ligands(pd.DataFrame({"inchikey": [RXT_S], "het": ["RXT"]}), _groups(RXT=RXT_IK))
+    assert m["match_level"].tolist() == ["skeleton"]
+
+
+def test_het_tiebreak_works_on_group_codes():
+    # HET names one code of a multi-code group
+    m = match_ligands(pd.DataFrame({"inchikey": [RXT_FLAT], "het": ["F3Z"]}),
+                      _groups(F3Z=RXT_IK, **{"38Z": RXT_IK}, RG4=RXT_S))
+    got = dict(zip(m["ligand_group"], m["match_note"]))
+    assert got == {"38Z/F3Z": "het_tiebreak", "RG4": "no_stereo_several_ligands"}
 
 
 # --- ligand table / HET cross-check ------------------------------------------------
@@ -313,18 +491,21 @@ def test_ligand_table_levels_and_het_disagreements():
             "1QO": {"inchikey": STI_ENANT, "smiles": "C"},
             "RXT": {"inchikey": RXT_IK, "smiles": "C"},
             "NEW": {"inchikey": OTHER_IK, "smiles": "C"},
+            "ABS": {"inchikey": "ZZZZZZZZZZZZZZ-UHFFFAOYSA-N", "smiles": "C"},
             "DRG": None}
-    groups = _groups(STI=STI_IK, **{"1QO": STI_ENANT}, RXT=RXT_IK, NEW=OTHER_IK, DRG="")
+    groups = _groups(STI=STI_IK, **{"1QO": STI_ENANT}, RXT=RXT_IK, NEW=OTHER_IK,
+                     ABS="ZZZZZZZZZZZZZZ-UHFFFAOYSA-N", DRG="")
     het = pd.DataFrame({"het": ["STI", "STI", "XYZ", "", "RXT"],
                         "inchikey": [STI_IK, OTHER_IK, STI_IK, STI_IK, RXT_FLAT]})
     seen = {STI_IK, RXT_FLAT}
-    t = ligand_table(["STI", "1QO", "RXT", "NEW", "DRG"], groups, chem, seen, het)
+    t = ligand_table(["STI", "1QO", "RXT", "NEW", "ABS", "DRG"], groups, chem, seen, het)
     t = t.set_index("ligand_code")
     # 1QO is skeleton via BindingDB's achiral STI key (STI's own key has no stereo block,
     # so it is not a "stereo dropped" case)
+    # NEW's exact key is in BindingDB (a row with HET "STI" carries it): found, full
     assert t["match_level"].to_dict() == {"STI": "full", "1QO": "skeleton",
-                                          "RXT": "bindingdb_no_stereo", "NEW": "none",
-                                          "DRG": "no_chem_comp"}
+                                          "RXT": "bindingdb_no_stereo", "NEW": "full",
+                                          "ABS": "none", "DRG": "no_chem_comp"}
     assert t.loc["STI", ["het_rows", "het_rows_inchikey_full", "het_rows_inchikey_other",
                          "inchikey_rows_other_het"]].tolist() == [2, 1, 1, 1]
     assert t.loc["RXT", ["het_rows_inchikey_no_stereo", "het_rows_inchikey_other"]].tolist() == [1, 0]
@@ -368,3 +549,30 @@ def test_domain_ambiguous_rows_never_make_a_ligand_comparable():
     cov = coverage(act, manifest, {392: "ABL1", 436: "JAK2", 439: "JAK2-b"})
     assert cov["comparable_ligands"] == 0
     assert cov["pairs_with_kd_or_ki"] == 1 and cov["pairs_domain_ambiguous_only"] == 2
+
+
+def test_two_domains_of_one_protein_are_not_selectivity():
+    # L1: Kd on JAK2 (JH1) and JAK2-b (JH2) only -> one protein: not comparable, listed apart
+    # L2: the same plus ABL1 -> two proteins: comparable, and its JAK2 pair still listed
+    act = _cov_act([("L1", JAK2, 436, "Kd", 1, 0, "full", False),
+                    ("L1", JAK2, 439, "Kd", 1, 0, "full", False),
+                    ("L2", JAK2, 436, "Kd", 1, 0, "full", False),
+                    ("L2", JAK2, 439, "Kd", 1, 0, "full", False),
+                    ("L2", ABL1, 392, "Kd", 1, 0, "full", False)])
+    manifest = pd.DataFrame([(k, u, g) for g in ("L1", "L2")
+                             for k, u in ((436, JAK2), (439, JAK2), (392, ABL1))],
+                            columns=["klifs_kinase_id", "uniprot", "ligand_group"])
+    cov = coverage(act, manifest, {392: "ABL1", 436: "JAK2", 439: "JAK2-b"})
+    assert [(d["ligand_group"], d["n_proteins"], d["n_domains"]) for d in cov["comparable"]] \
+        == [("L2", 2, 3)]
+    assert cov["comparable"][0]["same_measure_max"] == 2          # counted in proteins
+    assert [(d["ligand_group"], d["uniprot"], d["domains"])
+            for d in cov["intra_protein_domain_pairs"]] == [
+        ("L1", JAK2, ["JAK2(Kd:full)", "JAK2-b(Kd:full)"]),
+        ("L2", JAK2, ["JAK2(Kd:full)", "JAK2-b(Kd:full)"])]
+
+
+def test_primary_eligible_only_for_measured_domains():
+    src = pd.Series(["single_domain", "construct", "structure", "uniprot_level",
+                     "structure_ambiguous", "construct_ambiguous"])
+    assert primary_eligible(src).tolist() == [True, True, False, False, False, False]
