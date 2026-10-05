@@ -11,10 +11,11 @@ dependencies = ["numpy", "pandas", "biopython"]
 frustx = "frustx.cli:main"
 
 [project.optional-dependencies]
-# Neither is imported by frustx/ itself: matplotlib is for scripts/plot_*.py, and
+# None is imported by frustx/ itself: matplotlib is for scripts/plot_*.py,
 # latex2mathml is a build-time dependency of docs/explainer/build.py, which turns
-# the LaTeX in the explainer template into MathML.
-dev = ["pytest", "matplotlib", "latex2mathml"]
+# the LaTeX in the explainer template into MathML, and xlrd reads the 2011 .xls
+# supplementary tables in scripts/davis_activity.py (openpyxl cannot read .xls).
+dev = ["pytest", "matplotlib", "latex2mathml", "xlrd"]
 
 [build-system]
 requires = ["setuptools>=68"]
