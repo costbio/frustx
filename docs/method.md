@@ -3144,3 +3144,298 @@ COX-1, and 513/352) that are absent or frustrated in COX-1.
 
 Do not add descriptors to this table without a reason beyond significance-hunting; nine
 were tested and the BH correction is already carrying them.
+
+## The kinome dataset: structures, affinities, and whether Design A is testable
+
+Design A is the next experiment: for a fixed ligand with co-crystal structures against
+several kinases, does a per-complex frustration index rank the measured affinities? Three
+scripts build the data for it and two measure whether the data can carry the test at all.
+None of them computes frustration. The full narrative, with every funnel table, is
+`docs/kinome_dataset.md`; this section records the decisions and the traps.
+
+```
+scripts/klifs_manifest.py    -> data/kinome/klifs/      structures (the manifest)
+scripts/bindingdb_activity.py-> data/kinome/bindingdb/   coverage + activities
+scripts/davis_activity.py    -> data/kinome/davis/       the primary Kd source
+scripts/design_a_feasibility.py, scripts/extended_set.py -> data/kinome/analysis/
+```
+
+All five follow the same shape as the rest of the repo: network code separated from pure
+functions, every selection rule a counted funnel step with its thresholds recorded in a
+`*_funnel.json`, and 193 tests that run without network access.
+
+### Three sources, and why not one
+
+KLIFS gives the structures and, decisively, a *kinase-domain* numbering that matches what
+a pocket-level calculation needs. BindingDB gives breadth: 3.2M measurements, which is
+what tells us how much affinity data exists for the manifest's ligands at all. Davis et
+al. 2011 (KINOMEscan, PMID 22037378) gives one assay and one measure (Kd) across 72
+inhibitors x 442 kinase constructs, which is the only thing a selectivity *ranking*
+should rest on. BindingDB stays for coverage and sensitivity; Davis is primary.
+
+### Four KLIFS fields that would have broken naive filters
+
+Each was read from the live API before any filter was written, and each changed the code:
+"no ligand" is the integer `0`, not `""`; NMR entries carry `resolution = "0"`, so
+`resolution <= 2.5` alone passes every NMR model (normalise() turns 0 into NaN so the
+filter rejects it); `resolution` and `quality_score` arrive as strings; and KLIFS still
+lists PDB ids that RCSB has made obsolete. The orthosteric ligand field also contains no
+ions or buffers at all — its only non-inhibitors are nucleotides and their analogues,
+which is what `DEFAULT_EXCLUDE` lists, built from what actually occurs rather than from a
+guess about what might.
+
+### Deduplicate on the kinase domain, not the protein
+
+KLIFS's unit is a kinase *domain*. JAK1/2/3 and TYK2 each have a catalytic JH1 and a JH2
+pseudokinase domain under one UniProt; RSK/MSK have an N- and a C-terminal domain. Keying
+deduplication on UniProt merged the two domains' structures into one (kinase, ligand)
+slot and silently discarded one of them. Keying on `klifs_kinase_id` recovered three
+structures (JAK2/2HB 4P7E, JAK2-b/DQX 5UT4, JAK2-b/SKE 5USZ). 222 manifest rows carry
+`multi_domain_uniprot`; anything that joins affinity data to this manifest has to decide
+which domain a measurement belongs to (see below).
+
+### The RCSB check must precede deduplication
+
+Validating the manifest against RCSB (GraphQL, cached) runs on all ~4,400 rows that
+survive the KLIFS filters, **before** deduplication. The other order loses pairs: a
+structure RCSB rejects can win its (kinase, ligand) slot and take the whole pair down
+with it even though a valid runner-up existed. Statuses: 4,396 ok, 12
+`obsolete_remapped`, 10 `ligand_missing`, 2 `non_xray`.
+
+`obsolete_remapped` rows are dropped rather than remapped into the manifest. KLIFS's
+quality, resolution and missing-residue values for such a row describe the *old* deposit,
+not the replacement a download would fetch — 6MX8, which replaced 5J7H, is quality 6.8
+with 3 missing residues against 8 and 0 for the old entry. Nothing was lost: KLIFS
+annotates the replacement under its own row, and that row wins deduplication.
+
+Final manifest: **3,196 structures, 217 kinase domains, 214 UniProt, 2,882 ligands.**
+Three conditions are flagged, not dropped, because the download step must know about
+them: `ligand_chain_differs` 20 (three-character ligand chains, so mmCIF not PDB),
+`multi_copy_ligand` 75 (pick the copy in the pocket), `altloc_ligand_conflict` 8
+(different altlocs of one chain carry different ligands — 6HOP, CDK2 1H00/1H01/1H07/1H08).
+
+### BindingDB: the stereo layer is the thing that nearly lost the drugs
+
+The release is found by reading the download page and following its `SDFdownload.jsp`
+redirect; the zip's MD5 is checked against the published `.md5`, and the 9.0 GB TSV is
+streamed, never extracted. The file has 640 fields — 40 fixed plus 50 blocks of 12, one
+per target chain — and rows are padded to 640, so a multichain target is *more filled
+blocks*, not a longer row. 3,243,660 rows parsed, none unreadable.
+
+The trap: BindingDB routinely stores a chiral or E/Z compound's InChIKey **without its
+stereo layer** (second block `UHFFFAOYSA`), while RCSB's key carries it. Ruxolitinib,
+staurosporine, axitinib and lestaurtinib all sit there, and 293 manifest ligands matched
+nothing at all because of it. Hence a third match level, `bindingdb_no_stereo`: same
+14-character skeleton, BindingDB's key has no stereo layer while the ligand's does, same
+protonation, and the skeleton belongs to exactly one manifest ligand group. BindingDB's
+own HET-id column corroborates it — disagreements fell from 293 to 7 — and where a
+stereo-less record fits two manifest enantiomers, that column breaks the tie
+(`match_note = "het_tiebreak"`, 455 rows). Admitting this level took pairs with Kd/Ki
+from 413 to 640 and comparable ligands from 29 to 49. Genuine stereoisomers, protonation
+differences and unattributable cases stay in `activities_skeleton.csv`.
+
+Anything that reads these keys should assume the stereo layer may be missing and must
+never treat `-UHFFFAOYSA-` as "this compound is achiral".
+
+### The construct range decides the domain, not the crystal
+
+For the multi-domain proteins, BindingDB's target name usually says which construct was
+assayed: `JAK2 [808-1132]`, `TYK2 [556-888]`, `(aa658-end)`, sometimes several ranges for
+a deletion mutant. That is direct evidence and it outranks the fallback. The mapping from
+a UniProt kinase-domain span to a KLIFS kinase is done by locating KLIFS's 85-residue
+pocket string in the UniProt sequence (exact, unique substrings of >= 5 residues; a
+kinase is mapped only if >= 50% of its pocket is placed and every placed residue lies in
+one and the same domain). 25 of 26 kinases mapped; GCN2-b did not and is reported, not
+guessed.
+
+Rule order, per measurement: `construct` (a range covering >= 80% of exactly one domain)
+-> `structure` (no range: the domain where this ligand's crystal is) -> `uniprot_level`
+(no range, no crystal: stays at protein level). Checks: JAK2 [808-1132] -> JAK2,
+[536-812] -> JAK2-b, TYK2 [556-888] -> TYK2-b, [871-1187] -> TYK2. `primary_eligible`
+marks the first case and `single_domain`: the domain is known from the measurement itself
+rather than inferred from where a crystal happens to exist.
+
+Two measurements moved domain because of this ordering (M4G, M57: crystals on JAK2-b, but
+those values came from the JH1 construct), and 14 were rescued from `domain_ambiguous`.
+
+### BindingDB contains Davis, which makes the obvious cross-check circular
+
+BindingDB carries 14,497 Davis Kd rows, imported via ChEMBL under PMID 22037378. Removing
+that PMID is not enough: **74%** of the remaining comparable values were still identical
+to Davis, under other citations (Karaman 2008 *Nat Biotechnol* 1054/1289 identical,
+Zarrinkar 2009 *Blood* 542/572, and a large group with no reference at all). So
+`davis_activity.py` excludes any reference whose values are >= 80% identical to Davis
+(`--copy-threshold`) and reports all 38 of them with PubMed metadata.
+
+| comparison | pairs | median abs delta | abs delta > 1 | Spearman rho |
+|---|---|---|---|---|
+| BindingDB's Davis copy (sanity: must agree) | 3,384 | 0.00 | 0.1% | 0.998 |
+| Davis PMID removed only | 1,536 | 0.00 | 2.3% | 0.971 |
+| copy references removed as well | 433 | 0.30 | 10.2% | **0.883** |
+
+The first row is the check that the kinase and ligand mappings are right. The third is
+the real independent agreement. **Quote 0.88, not 0.97.**
+
+The same circularity killed an earlier cross-check in `design_a_feasibility.py`: 63% of
+BindingDB's primary values for the Davis complexes were identical to Davis, so the
+section was removed rather than caveated. Do not reinstate a BindingDB-vs-Davis
+comparison without filtering the copies first.
+
+### Davis: censored cells are a bound, never a value
+
+Supplementary Tables 1, 3 and 4 are located on the article page by caption, not by a
+guessed URL pattern (MD5 + date in `raw/provenance.json`), and read with `xlrd` — the only
+reader for the 2011 `.xls` format, added to the `dev` extra, imported inside the reading
+function so the offline tests do not need it. Processed redistributions (TDC/DeepDTA) are
+**not** used: they convert "no binding" to a fixed pKd and drop the kinase variants, which
+are exactly the two things this work needs.
+
+The matrix is 442 x 72 = 31,824 cells, every value stored as *text*, and **22,400 are
+blank**. The Table 4 legend defines blank as "tested, but binding was weak (Kd > 10 uM),
+or not detected in a 10 uM primary screen". So a blank is `censored = True` and is kept
+only as the bound pKd < 5 (`censor_bound_pX`). It never becomes a number and never enters
+a median. Setting it to the 10 uM bound instead would stretch every ligand's affinity
+range by an amount the assay never measured — which is the whole quantity Design A's
+power depends on.
+
+2011 Entrez symbols are stale for 23 of the 442 constructs (FRAP1 = MTOR, ZAK, PCTK1...),
+so kinases are mapped by accession through UniProt ID mapping, with the gene symbol only
+as a fallback: 437 mapped, 382 of them wild type. Beware the naming collision: Davis's
+"RSK1" (RPS6KA1) is KLIFS's **RSK3**, and Davis's "RSK3" (RPS6KA2) is KLIFS's **RSK1**.
+Identity comes from the accession, so the data is right and only the labels differ.
+
+Two explicit decisions, both recorded in the data: `ABL1-nonphosphorylated` counts as wild
+type (`variant_note = "abl1_nonphos_as_wt"`) because Davis has no unqualified ABL1 row,
+which took the comparable set from 17 to 19 ligands; and two compounds whose PubChem
+aliases resolve to different salt forms of one parent are assigned to the free base
+(`match_note = "salt_resolved"`, CHIR-258 -> dovitinib -> group 38O, R406 -> tamatinib ->
+group 585). PTK-787, CI-1033 and the BIBF-1120 derivative stayed unresolved and are out.
+
+### Design A feasibility: the pooled model is the only test this data supports
+
+Scope: per ligand, the kinases with a manifest structure of *that* ligand and a wild-type,
+uncensored Davis Kd — **20 ligands, 96 complexes, 68 proteins**, median affinity range
+1.40 log units.
+
+The simulation is `frustration_i = ratio * pKd_i + N(0, 1)`, where
+`ratio = slope / noise_sd` and both are in log units of the affinity scale. Only the ratio
+matters, which is what makes the result independent of the frustration index's own units —
+a necessary property, since nothing here has computed one yet. The test is a two-sided
+permutation test on Spearman rho at alpha = 0.05, with **exact enumeration for n <= 7**.
+That exactness is what makes the small-n verdicts honest rather than pessimistic: with
+n = 4 the smallest attainable two-sided p is 2/24 = 0.083, so no arrangement of the data
+can reach 0.05 however strong the true relationship.
+
+Per ligand, only six have enough n to be significant at all, and only three have real
+power: STU (26 complexes), 1N1 (10), DB8 (9). **Eleven ligands have n = 2**, where the
+minimum attainable p is 1.0. Pooled — Pearson on within-ligand centred ranks, the
+fixed-effect slope of `frustration ~ pKd + (1|ligand)` without fitting the model, null
+permuted inside each ligand — power crosses 80% at **ratio ~0.6** (0.5 -> 0.70,
+0.6 -> 0.85). That is the number to report as the smallest detectable effect. Monte-Carlo
+error at 4,000 simulations is about +/-0.6 points, so pinning the ratio finer than ~0.05
+is not meaningful.
+
+Roles, by a rule rather than by hand: range >= 1 log unit -> `ranking`; narrower ->
+`negative_control` (7 Davis ligands, 18 complexes: VX6, BAX, VGH, GUI, NIL, LY4, 88Z).
+The negative controls are **not** dropped — their kinases are effectively equipotent, so
+they test the opposite hypothesis, that a sound index finds *no* ordering there. But that
+set is itself underpowered (0.26 at ratio 2.0 on Davis alone), so a null result there
+cannot distinguish "no ordering, as predicted" from "no power to see one". Say so when
+reporting it.
+
+110 paralog pairs (19 same KLIFS family) are the hardest and most interesting contrasts,
+since the two pockets differ least: STI ABL1/ABL2 0.96 log, VX6 AurA/AurC 0.21, the MI1
+JAK series 0.44-1.48, and 1N1 BMX/BTK an exact tie at 0.00.
+
+### The permutation test must use a p-value, not a quantile
+
+`pooled_power` originally compared the statistic against the null distribution's
+(1 - alpha) quantile. The two rules agree when the null is continuous — the large scopes
+were right to three decimals — but they diverge on a **coarse** null, which is what a
+small scope produces, and the quantile route overstates power. The diagnostic case: a
+scope of one two-complex ligand always gives |stat| = 1, so the quantile is 1, every draw
+"beats" it and power reads 1.000, while the real p-value is 1 and nothing could ever be
+significant.
+
+| scope | old (quantile) | new (p-value) |
+|---|---|---|
+| pooled_all (96 complexes), ratio 2.0 | 1.000 | 1.000 |
+| pooled_ranking (78), ratio 1.0 | 0.996 | 0.996 |
+| **negative control (18), ratio 2.0** | **0.394** | **0.261** |
+| a 2-complex scope, any ratio | 1.000 (absurd) | 0 |
+
+The one published number this changes is the negative-control power: **0.26, not 0.39.**
+The ranking scopes and the ~0.6 detectable effect are unaffected.
+`tests/test_design_a_feasibility.py` pins the divergence on a coarse-null fixture and runs
+every pooled test against *both* implementations via `@parametrize`, so the same bug
+cannot reappear in one script and not the other. The same function also crashed on an
+empty scope; guarded.
+
+Any future statistic over these small, discrete scopes should report
+`min_attainable_p` alongside power. It is what tells you whether a scope is underpowered
+or mathematically incapable, and the two call for different responses.
+
+### Extending with BindingDB buys negative controls, not sensitivity
+
+`extended_set.py` adds the BindingDB ligands Davis never measured, under rules that keep
+the sources from contaminating the comparison: **a ligand takes all its values from one
+source** (Davis if Davis measured it), IC50 is never used, a ligand uses either Kd or Ki
+but not both, `inconsistent` aggregates are dropped, and a BindingDB value aggregated from
+exactly one report is flagged `single_measurement` so every power figure can be computed
+with and without it.
+
+| | ligands | complexes | proteins |
+|---|---|---|---|
+| Davis | 20 | 96 | 68 |
+| BindingDB added | 22 | 47 | — |
+| extended | 42 | **143** | 86 |
+
+Structures, not affinity data, are the bottleneck: on the BindingDB side 3,648 rows
+survive the quality filters, 517 survive "has a structure", and 47 survive ">= 2
+proteins". 20 of the 22 added ligands have exactly two complexes.
+
+A third role was needed. A ligand wide enough to rank whose window rests on single-report
+values at **both** ends becomes `exploratory`: the range that qualified it could be
+measurement noise. The rule is general and catches exactly 8X7, 537 and YAM. They stay in
+the set and frustx will still run their complexes — they are simply not evidence for the
+ranking hypothesis. Final roles: **ranking 18 / 88, exploratory 3 / 7,
+negative_control 21 / 48.**
+
+Three findings:
+
+1. **The extension does not lower the detectable effect.** Davis alone and the extended
+   set both cross 80% at ratio 0.6 (0.845 vs 0.849). Two-point groups carry almost no
+   within-ligand information.
+2. **The gain is in the negative control**: 18 -> 48 complexes, power at ratio 2.0 from
+   0.26 to 0.53. Still short of 80%.
+3. **BindingDB's own ranking contribution is provably insufficient**: 5 ligands x 2
+   complexes gives 2/32 = 0.0625 as the smallest attainable p (measured 0.0636) > 0.05.
+   No effect size can make it significant alone.
+
+### Source as a covariate is not identifiable — and what to use instead
+
+Davis and BindingDB differ in level (median pKd 7.89 vs 7.23, a ~0.65 log offset) with
+near-identical spread. That offset cannot bias the within-ligand slope: because no ligand
+mixes sources, source is nested inside ligand and perfectly collinear with the ligand
+intercept of `frustration ~ pKd + (1|ligand)`, so it is absorbed. Adding `source` as a
+fixed effect is redundant.
+
+What does differ within ligands is the window: median within-ligand range 1.40 log for
+Davis against **0.62** for BindingDB, with 57% of the BindingDB values backed by a single
+report. That argues for a source-specific residual variance (or weighting/stratifying by
+source), not a source intercept.
+
+### Open, and NOT decided unilaterally
+
+- Whether `exploratory` (8X7, 537, YAM) stays out of the primary ranking test.
+- The negative control needs either more narrow-range ligands or an equivalence (TOST)
+  framing before a null there counts as evidence.
+- Full-protein measurements are assigned to JH2 by the structure rule when that is where
+  the ligand's crystal is (e.g. a full-length TYK2 IC50 for KZJ -> TYK2-b). An allosteric
+  JH2 binder does inhibit the full protein, but that value is an enzyme activity, not a
+  JH2 binding constant.
+- The TYK2 JH2 series is a candidate sub-study on its own: 2,978 ligands measured on JH2
+  constructs, only 3 of them with a manifest structure (ZRU, ZS3, ZSB).
+- **The download step is not written.** The manifest carries `pdb`/`chain`/`altloc`/
+  `ligand_code` per complex; the three flags above say which rows need mmCIF, pocket-copy
+  selection and altloc selection.
