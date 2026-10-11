@@ -7,10 +7,17 @@ where the two kinases differ?
 
     .venv/bin/python scripts/plot_pilot.py --tag _smoke
 
-positions.png is the claim: every matched pocket position, the difference in raw
-frustration index between the tighter- and the weaker-binding kinase, with the divergent
-positions marked and the decoy noise floor shaded. summary.png is the decision: the
-per-pair statistic against that floor, and what a larger decoy ensemble would buy.
+**The figure set is built to show the negative result, not to hide it.** One pair
+(ABL1/ABL2) looks significant at p 0.02 and would make a convincing single panel. It is
+one contact carrying no interaction energy, so `confound.png` and `sweep.png` are the
+load-bearing figures here -- the first two are the claim, the last two are why it does
+not hold and why the 1000-decoy run was needed to know that.
+
+  positions.png  the claim: dF at every matched pocket position, divergent marked
+  summary.png    the same claim as one number per pair, with its noise floor
+  confound.png   why: the extreme dF values sit at contacts with no energy
+  sweep.png      and so: the test collapses as soon as an energy floor is applied
+  decoys.png     the 50- vs 1000-decoy statistic, where one apparent signal flipped sign
 
 Colours are slots 1 and 2 of the reference categorical palette (blue / orange), in fixed
 order, matching scripts/plot_cox_selectivity.py. They are a pre-validated adjacent pair;
@@ -100,49 +107,170 @@ def positions_figure(pos: pd.DataFrame, summary: pd.DataFrame, path: pathlib.Pat
 
 
 def summary_figure(summary: pd.DataFrame, path: pathlib.Path):
-    """Left: the per-pair statistic against the noise floor. Right: what more decoys buy."""
+    """The headline per pair: the statistic, its noise floor, and the p-value.
+
+    A dot-and-whisker rather than bars: the quantity is a signed difference of means with
+    an uncertainty, not a magnitude from zero. The p label is placed beyond the WHISKER
+    end, not the point -- anchoring it to the point put the text on top of the whisker
+    whenever the noise floor was wide, which is what the 50-decoy figure did.
+    """
     order = summary.sort_values(["role", "delta_pKd"], ascending=[True, False])
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.2))
+    fig, ax = plt.subplots(figsize=(8.4, 0.72 * len(order) + 2.0))
     y = np.arange(len(order))[::-1]
+    _axes(ax)
+    ax.grid(axis="x", color=GRID, lw=0.6, zorder=0)
+    ax.grid(axis="y", visible=False)
+
+    for yy, row in zip(y, order.itertuples()):
+        colour = CONS if row.role == "negative_control" else DIV
+        ax.errorbar(row.statistic, yy, xerr=row.noise_floor_dF, color=MUTED, lw=1.4,
+                    capsize=4, zorder=3)
+        ax.scatter(row.statistic, yy, s=110, color=colour, zorder=4,
+                   edgecolor="white", linewidth=1.8)
+        side = 1 if row.statistic >= 0 else -1
+        ax.annotate(f"p {row.p_value:.3f}",
+                    (row.statistic + side * row.noise_floor_dF, yy),
+                    textcoords="offset points", xytext=(side * 11, 0),
+                    ha="left" if side > 0 else "right", va="center",
+                    fontsize=9, color=INK)
+    ax.axvline(0, color="0.55", lw=0.8, ls="--", zorder=2)
+    ax.set_yticks(y, [f"{r.pair}\n{r.ligand_group}  ΔpKd {r.delta_pKd:.2f}"
+                      + ("  [neg. control]" if r.role == "negative_control" else "")
+                      for r in order.itertuples()], fontsize=9)
+    # room for the labels at both ends
+    span = float(np.max(np.abs(order["statistic"]) + order["noise_floor_dF"]))
+    ax.set_xlim(-span * 1.55, span * 1.55)
+    # At 1000 decoys the floor is ~0.05, smaller than the marker, so the whiskers are
+    # drawn but invisible. Stating the number keeps that from reading as "no uncertainty
+    # was shown" -- at 50 decoys the same whiskers are plainly visible.
+    floor = float(order["noise_floor_dF"].median())
+    ax.set_xlabel(f"mean ΔF divergent − conserved   (whiskers: decoy noise floor, "
+                  f"±{floor:.2f}" + (", smaller than the marker)" if floor < 0.1 else ")"),
+                  fontsize=10, color=MUTED)
+    ax.set_title("The statistic per pair, before any energy floor", loc="left",
+                 fontsize=11, color=INK)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def confound_figure(pos: pd.DataFrame, path: pathlib.Path):
+    """Why the apparent result is not one: |dF| against the energy the contact carries.
+
+    The index is a z-score, so it is scale-free -- a contact with no interaction energy
+    divides a tiny difference by a tiny sigma and lands anywhere. This is the load-bearing
+    panel: the largest |dF| in the whole pilot belongs to a contact of -0.07 kcal/mol.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.6))
 
     _axes(ax1)
-    ax1.grid(axis="x", color=GRID, lw=0.6, zorder=0)
-    ax1.grid(axis="y", visible=False)
-    for yy, row in zip(y, order.itertuples()):
-        colour = DIV if row.role != "negative_control" else CONS
-        ax1.barh(yy, row.statistic, height=0.5, color=colour, zorder=3,
-                 edgecolor="white", linewidth=2)
-        ax1.errorbar(row.statistic, yy, xerr=row.noise_floor_dF, color=MUTED, lw=1.4,
-                     capsize=3, zorder=4)
-        ax1.annotate(f"p {row.p_value:.3f}", (row.statistic, yy),
-                     textcoords="offset points",
-                     xytext=(8 if row.statistic >= 0 else -8, 0),
-                     ha="left" if row.statistic >= 0 else "right", va="center",
-                     fontsize=9, color=INK)
-    ax1.axvline(0, color="0.55", lw=0.8, ls="--", zorder=2)
-    ax1.set_yticks(y, [f"{r.pair}\n{r.ligand_group}  ΔpKd {r.delta_pKd:.2f}"
-                       for r in order.itertuples()], fontsize=9)
-    ax1.set_xlabel("mean ΔF divergent − conserved  (bars: noise floor)", fontsize=10,
-                   color=MUTED)
-    ax1.set_title("The statistic, per pair", loc="left", fontsize=11, color=INK)
+    for mask, colour, label, size in ((~pos["divergent"], CONS, "conserved position", 26),
+                                      (pos["divergent"], DIV, "divergent position", 70)):
+        d = pos[mask]
+        ax1.scatter(d["min_abs_native"], d["dF"].abs(), s=size, color=colour,
+                    alpha=0.8, zorder=3, label=label,
+                    edgecolor="white" if size > 30 else "none", linewidth=1.2)
+    ax1.axvline(0.02, color="0.55", lw=1.0, ls="--", zorder=2)
+    ax1.annotate("0.02 kcal/mol: config.py's\nenergetically dead threshold", (0.02, 0),
+                 textcoords="offset points", xytext=(-6, 30), fontsize=8.5, color=MUTED,
+                 ha="right")
+    worst = pos.loc[pos["dF"].abs().idxmax()]
+    ax1.annotate(f"{worst['pair']}  {worst.get('klifs_position', '')}\n"
+                 f"{worst['min_abs_native']:.3f} kcal/mol → |ΔF| {abs(worst['dF']):.1f}",
+                 (worst["min_abs_native"], abs(worst["dF"])),
+                 textcoords="offset points", xytext=(26, -4), fontsize=9, color=INK,
+                 ha="left", va="top",
+                 arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
+    # symlog: the energies are non-negative but include exact zeros, so a plain log axis
+    # would drop them; the limit keeps the negative half of the symlog off the canvas
+    ax1.set_xscale("symlog", linthresh=0.01)
+    ax1.set_xlim(left=-0.002)
+    ax1.set_xlabel("interaction energy of the contact, min of the pair  (|kcal/mol|)",
+                   fontsize=10, color=MUTED)
+    ax1.set_ylabel("|ΔF|", fontsize=10, color=MUTED)
+    ax1.set_title("A z-score of nothing is still a large z-score", loc="left",
+                  fontsize=11, color=INK)
+    ax1.legend(frameon=False, fontsize=9, loc="center right")
 
     _axes(ax2)
-    n_now = int(order["n_decoys"].iloc[0])
-    floor_now = order["noise_floor_dF"].to_numpy()
-    # the floor scales as 1/sqrt(n) in its dominant term, so project the same effect
-    projected = floor_now * np.sqrt(n_now / 1000.0)
-    effect = order["mean_abs_dF"].to_numpy()
-    ax2.barh(y + 0.18, effect / floor_now, height=0.34, color=CONS, zorder=3,
-             edgecolor="white", linewidth=2, label=f"{n_now} decoys (now)")
-    ax2.barh(y - 0.18, effect / projected, height=0.34, color=DIV, zorder=3,
-             edgecolor="white", linewidth=2, label="1000 decoys (projected)")
-    ax2.axvline(1, color="0.55", lw=0.8, ls="--", zorder=2)
-    ax2.set_yticks(y, [r.pair for r in order.itertuples()], fontsize=9)
-    ax2.set_xlabel("mean |ΔF| ÷ noise floor   (1 = effect equals noise)", fontsize=10,
-                   color=MUTED)
-    ax2.set_title("What a bigger decoy ensemble buys", loc="left", fontsize=11, color=INK)
-    ax2.legend(frameon=False, fontsize=9, loc="lower right")
+    counts = [((pos["min_abs_native"] < f).sum(), f) for f in (0.02, 0.1, 0.3, 0.5)]
+    ax2.barh(range(len(counts)), [c for c, _ in counts], height=0.55, color=CONS,
+             zorder=3, edgecolor="white", linewidth=2)
+    ax2.set_yticks(range(len(counts)), [f"< {f} kcal/mol" for _, f in counts], fontsize=9)
+    for k, (c, _) in enumerate(counts):
+        ax2.annotate(f"{c} of {len(pos)}", (c, k), textcoords="offset points",
+                     xytext=(6, 0), va="center", fontsize=9, color=INK)
+    ax2.set_xlabel("matched positions below the floor", fontsize=10, color=MUTED)
+    ax2.set_title("How much of the interface is energetically empty", loc="left",
+                  fontsize=11, color=INK)
 
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def sweep_figure(sweeps: pd.DataFrame, path: pathlib.Path):
+    """The test at every energy floor, frustration beside raw energy.
+
+    Small multiples rather than five series on one axis: each panel then carries only two
+    series, which is the validated colour pair, and no hue has to be invented.
+    """
+    pairs = sorted(sweeps["pair"].unique(),
+                   key=lambda p: (sweeps.loc[sweeps["pair"] == p, "role"].iloc[0] ==
+                                  "negative_control", p))
+    fig, axes = plt.subplots(1, len(pairs), figsize=(3.0 * len(pairs), 3.6), sharey=True)
+    axes = np.atleast_1d(axes)
+    for ax, pair in zip(axes, pairs):
+        _axes(ax)
+        d = sweeps[sweeps["pair"] == pair]
+        for q, colour, label in (("dF", DIV, "frustration (ΔF)"),
+                                 ("dE", CONS, "raw energy (ΔE)")):
+            dd = d[d["quantity"] == q].sort_values("energy_floor")
+            ax.plot(dd["energy_floor"], dd["p_value"], color=colour, lw=2, marker="o",
+                    ms=7, zorder=4, label=label)
+        ax.axhline(0.05, color="0.55", lw=1.0, ls="--", zorder=2)
+        ax.set_ylim(-0.03, 1.0)
+        role = d["role"].iloc[0]
+        ax.set_title(f"{pair}\nΔpKd {d['delta_pKd'].iloc[0]:.2f}"
+                     + ("  [neg. control]" if role == "negative_control" else ""),
+                     loc="left", fontsize=9.5, color=INK)
+        ax.set_xlabel("energy floor (kcal/mol)", fontsize=9, color=MUTED)
+    axes[0].set_ylabel("permutation p-value", fontsize=10, color=MUTED)
+    axes[0].annotate("α = 0.05", (0.0, 0.05), textcoords="offset points", xytext=(2, 6),
+                     fontsize=8.5, color=MUTED)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle("The one significant result survives no energy floor, and the cheap "
+                 "comparator never had it either", fontsize=11, color=INK, ha="left",
+                 x=0.012, y=0.99)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.92))
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def decoys_figure(now: pd.DataFrame, smoke: pd.DataFrame, path: pathlib.Path):
+    """50 vs 1000 decoys: which pairs held and which were sampling noise."""
+    m = smoke.merge(now, on="pair", suffixes=("_50", "_1000"))
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    _axes(ax)
+    ax.grid(axis="x", visible=False)
+    for r in m.itertuples():
+        colour = CONS if r.role_1000 == "negative_control" else DIV
+        ax.plot([0, 1], [r.statistic_50, r.statistic_1000], color=colour, lw=2,
+                alpha=0.85, zorder=3)
+        ax.scatter([0, 1], [r.statistic_50, r.statistic_1000], s=60, color=colour,
+                   zorder=4, edgecolor="white", linewidth=1.5)
+        flipped = np.sign(r.statistic_50) != np.sign(r.statistic_1000)
+        ax.annotate(f"{r.pair}{'  ← sign flipped' if flipped else ''}",
+                    (1, r.statistic_1000), textcoords="offset points", xytext=(10, 0),
+                    va="center", fontsize=9, color=INK if flipped else MUTED)
+    ax.axhline(0, color="0.55", lw=0.8, ls="--", zorder=2)
+    ax.set_xticks([0, 1], ["50 decoys", "1000 decoys"], fontsize=10)
+    ax.set_xlim(-0.15, 1.75)
+    ax.set_ylabel("mean ΔF divergent − conserved", fontsize=10, color=MUTED)
+    ax.set_title("What twenty times more sampling changed", loc="left", fontsize=11,
+                 color=INK)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -163,11 +291,21 @@ def main(argv=None) -> int:
     labels = dict(zip(pmap["pocket_position"].astype(int), pmap["klifs_position"]))
     pos["klifs_position"] = pos["position"].map(labels)
 
+    sweeps = pd.read_csv(a.analysis / f"pilot_sweep{a.tag}.csv")
+    out = []
     p1 = a.analysis / f"pilot_positions{a.tag}.png"
-    p2 = a.analysis / f"pilot_summary{a.tag}.png"
-    positions_figure(pos, summary, p1)
-    summary_figure(summary, p2)
-    print(f"wrote {p1}\nwrote {p2}")
+    positions_figure(pos, summary, p1); out.append(p1)
+    p1b = a.analysis / f"pilot_summary{a.tag}.png"
+    summary_figure(summary, p1b); out.append(p1b)
+    p2 = a.analysis / f"pilot_confound{a.tag}.png"
+    confound_figure(pos, p2); out.append(p2)
+    p3 = a.analysis / f"pilot_sweep{a.tag}.png"
+    sweep_figure(sweeps, p3); out.append(p3)
+    smoke = a.analysis / "pilot_comparison_smoke.csv"
+    if smoke.exists() and not a.tag:
+        p4 = a.analysis / "pilot_decoys.png"
+        decoys_figure(summary, pd.read_csv(smoke), p4); out.append(p4)
+    print("\n".join(f"wrote {x}" for x in out))
     return 0
 
 

@@ -51,6 +51,17 @@ import pandas as pd
 ALPHA = 0.05
 N_PERMUTATIONS = 20000
 SEED = 20261011
+# The index is a z-score, so it is scale-free: a contact carrying no interaction energy
+# can still produce a large one (ABL2 PRO365-STI: native -0.072 kcal/mol, sigma 0.019,
+# index +4.4 -- larger than MET336 at -4.6 kcal/mol). config.py documents 0.02 as the
+# energetically dead threshold. Rather than pick a floor -- the floor that happens to
+# remove the artifact would be chosen BY the artifact -- the test is swept over these and
+# a claim counts only if it survives all of them.
+ENERGY_FLOORS = (0.0, 0.1, 0.3, 0.5)
+# Every dF result is shown beside the same test on the raw interaction energy difference,
+# which needs no decoy ensemble. If the signal is there too, the decoys bought nothing --
+# the shape of the COX negative result (docs/method.md).
+QUANTITIES = {"dF": "frustration index", "dE": "raw interaction energy"}
 
 
 # --- pure logic --------------------------------------------------------------------
@@ -101,10 +112,31 @@ def matched_positions(hi: pd.DataFrame, lo: pd.DataFrame, pocket_hi: dict,
     l = l.sort_values("frustration_index", ascending=False).drop_duplicates("position")
     m = h.merge(l, on="position", suffixes=("_hi", "_lo"))
     m["dF"] = m["frustration_index_hi"] - m["frustration_index_lo"]
+    # the cheap comparator: no decoys needed, only the relaxed native
+    m["dE"] = m["native_energy_hi"] - m["native_energy_lo"]
+    m["min_abs_native"] = np.minimum(m["native_energy_hi"].abs(),
+                                     m["native_energy_lo"].abs())
     m["dF_specific"] = (m["frustration_index_specific_hi"]
                         - m["frustration_index_specific_lo"])
     m["divergent"] = m["position"].isin(divergent)
     return m.sort_values("position")
+
+
+def sweep(matched: pd.DataFrame, rng: np.random.Generator) -> list[dict]:
+    """The enrichment test at every energy floor, for both quantities.
+
+    A floor keeps only positions whose contact carries at least that much interaction
+    energy in BOTH complexes, so a position cannot qualify on the strength of one side.
+    """
+    rows = []
+    for floor in ENERGY_FLOORS:
+        keep = matched[matched["min_abs_native"] >= floor]
+        for q in QUANTITIES:
+            t = (enrichment_test(keep.assign(dF=keep[q]), rng)
+                 if len(keep) > 2 else {"n_matched": len(keep)})
+            rows.append({"energy_floor": floor, "quantity": q,
+                         "dropped": len(matched) - len(keep), **t})
+    return rows
 
 
 def enrichment_test(matched: pd.DataFrame, rng: np.random.Generator,
@@ -159,7 +191,7 @@ def main(argv=None):
     pmap = pmap[pmap["resolved"] == "True"]
     rng = np.random.default_rng(SEED)
 
-    settings, per_contact, per_pair = {}, [], []
+    settings, per_contact, per_pair, sweep_rows = {}, [], [], []
     for r in pairs.itertuples():
         lig = r.ligand_group
         # hi = the kinase that binds this ligand more tightly (pilot_pairs is built that way)
@@ -196,6 +228,9 @@ def main(argv=None):
         per_contact.append(m)
 
         test = enrichment_test(m, rng)
+        for row in sweep(m, rng):
+            sweep_rows.append({"pair": r.pair, "ligand_group": lig, "role": r.role,
+                               "delta_pKd": r.delta_pKd, **row})
         noise = float(m["dF_se"].median())
         per_pair.append({
             "pair": r.pair, "ligand_group": lig, "role": r.role,
@@ -212,6 +247,16 @@ def main(argv=None):
 
     contacts = pd.concat(per_contact, ignore_index=True)
     summary = pd.DataFrame(per_pair)
+    sweeps = pd.DataFrame(sweep_rows)
+    sweeps.to_csv(a.out / f"pilot_sweep{a.tag}.csv", index=False)
+    # a claim counts only if it holds at every floor, in dF and not merely in dE
+    verdict = []
+    for pair, d in sweeps[sweeps["quantity"] == "dF"].groupby("pair"):
+        ok = d["p_value"].notna() & (d["p_value"] <= ALPHA)
+        verdict.append({"pair": pair, "floors_tested": len(d),
+                        "floors_significant": int(ok.sum()),
+                        "survives_sweep": bool(ok.all())})
+    verdict = pd.DataFrame(verdict)
     contacts.to_csv(a.out / f"pilot_positions{a.tag}.csv", index=False)
     summary.to_csv(a.out / f"pilot_comparison{a.tag}.csv", index=False)
 
@@ -240,7 +285,10 @@ def main(argv=None):
             "seed": SEED},
         "settings": comparable,
         "settings_disagree": disagree,
+        "energy_floors": list(ENERGY_FLOORS),
         "pairs": per_pair,
+        "sweep": sweep_rows,
+        "verdict": verdict.to_dict("records"),
     }, indent=2, default=str) + "\n")
 
     pd.set_option("display.width", 250)
@@ -255,8 +303,24 @@ def main(argv=None):
     print("\nnoise: is the effect above what this decoy count can resolve?")
     print(summary[["pair", "n_decoys", "mean_abs_dF", "noise_floor_dF",
                    "effect_vs_noise"]].to_string(index=False))
+    print("\nenergy-floor sweep: p-value per pair, dF above / dE below")
+    for q in QUANTITIES:
+        w = (sweeps[sweeps["quantity"] == q]
+             .pivot_table(index="pair", columns="energy_floor", values="p_value"))
+        n = (sweeps[sweeps["quantity"] == q]
+             .pivot_table(index="pair", columns="energy_floor", values="n_matched"))
+        print(f"\n  {q} ({QUANTITIES[q]}) -- p-value, (positions kept)")
+        for pair in w.index:
+            cells = "  ".join(f"{w.loc[pair, f]:.3f} ({int(n.loc[pair, f]):2})"
+                              if pd.notna(w.loc[pair, f]) else "   n/a    "
+                              for f in sorted(w.columns))
+            print(f"    {pair:14} {cells}")
+        print(f"    {'floors:':14} " + "  ".join(f"{f:<9}" for f in sorted(w.columns)))
+
+    print("\nverdict (significant at EVERY floor, in dF):")
+    print(verdict.to_string(index=False))
     print(f"\nwrote {a.out}/pilot_comparison{a.tag}.csv, pilot_positions{a.tag}.csv, "
-          f"pilot_comparison{a.tag}.json")
+          f"pilot_sweep{a.tag}.csv, pilot_comparison{a.tag}.json")
     return 0
 
 
