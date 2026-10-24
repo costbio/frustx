@@ -103,3 +103,10 @@ def test_check_pocket_reports_absent_positions():
              _atom("ATOM", "CA", "ALA", "A", 11, 0.0, el="C")]
     r = check_pocket(lines, ["10", "11", "12"])
     assert r["pocket_present"] == 2 and r["pocket_missing"] == ["12"]
+
+def test_check_pocket_counts_kept_modified_residues_but_not_the_ligand():
+    lines = [_atom("ATOM", "CA", "ALA", "A", 10, 0.0, el="C"),
+             _atom("HETATM", "CA", "MSE", "A", 11, 0.0, el="C"),
+             _atom("HETATM", "C1", "STI", "A", 12, 0.0, el="C")]
+    assert check_pocket(lines, ["10", "11", "12"])["pocket_missing"] == ["11", "12"]
+    assert check_pocket(lines, ["10", "11", "12"], "STI")["pocket_missing"] == ["12"]

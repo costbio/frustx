@@ -213,7 +213,9 @@ def pocket_map_table(maps: dict, complexes: pd.DataFrame) -> tuple[pd.DataFrame,
             if labels.setdefault(idx, lab) != lab:
                 problems.append({"position": idx, "expected": labels[idx], "got": lab,
                                  "structure": c.klifs_structure_id})
-            xray = str(e.get("Xray_position", "")).strip()
+            # JSON null too: RSK3 2Z7R comes back with every position null, which str()
+            # would turn into "None" and count as resolved.
+            xray = str(e.get("Xray_position") or "").strip()
             # KLIFS marks an unplaced position with "-1" or with its gap character
             # ("_"), which is what the pocket STRINGS use -- both appear in practice
             # (BMX 3SXR has four "_" positions, BTK 3OCT two).

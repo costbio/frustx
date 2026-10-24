@@ -236,12 +236,21 @@ def sdf_atom_counts(text: str) -> dict:
             "elements": dict(elements)}
 
 
-def check_pocket(kept_lines: list[str], expected: list[str]) -> dict:
+def check_pocket(kept_lines: list[str], expected: list[str],
+                 ligand_code: str | None = None) -> dict:
     """Are the pocket positions still in the cleaned file? `expected` is the list of
     X-ray residue numbers from `pilot_pocket_map.csv` that KLIFS resolved. A position
     missing here is a hole in the position-resolved analysis, so it is counted, not
-    assumed absent."""
-    present = {l[22:26].strip() for l in kept_lines if l.startswith("ATOM  ")}
+    assumed absent.
+
+    With `ligand_code`, kept HETATM residues other than the ligand count as present too:
+    those are the modified amino acids clean_complex keeps (CME 161 in PIM1 1YHS, MSE 94
+    and 138 in MAPKAPK2 1NXK are pocket positions). Without it, only ATOM records count
+    -- the original behaviour, which reported those three as missing."""
+    present = {l[22:26].strip() for l in kept_lines
+               if l.startswith("ATOM  ") or (ligand_code is not None
+                                             and l.startswith("HETATM")
+                                             and l[17:20].strip() != ligand_code)}
     missing = [r for r in expected if r not in present]
     return {"pocket_expected": len(expected), "pocket_present": len(expected) - len(missing),
             "pocket_missing": missing}

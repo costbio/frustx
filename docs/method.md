@@ -3439,3 +3439,106 @@ source), not a source intercept.
 - **The download step is not written.** The manifest carries `pdb`/`chain`/`altloc`/
   `ligand_code` per complex; the three flags above say which rows need mmCIF, pocket-copy
   selection and altloc selection.
+
+## KLIFS-first complex set: many kinases per ligand (`DRUG_KINASE_COMPLEXES.csv`)
+
+A new starting point, decided 2026-10-24: Davis is no longer the gate. The question is
+selectivity — one ligand across *many* human kinases — so the unit is a ligand with a
+co-crystal structure **and** a binding value on >= 5 kinases, structures from KLIFS only.
+`scripts/klifs_complex_set.py` -> `data/kinome/DRUG_KINASE_COMPLEXES.csv` (the table to
+use), with `data/kinome/complex_set/` holding the ligand summary, the per-kinase
+affinities, every ChEMBL row with its fate, and `funnel.json`.
+
+### Structures, not affinities, are the ceiling
+
+Counted on `klifs_raw.csv` (human, nucleotides excluded, no other filter): ligands
+co-crystallised with >= 3 / >= 5 / >= 10 kinase domains: **69 / 18 / 4**. The four at
+>= 10 are STU (38), dasatinib 1N1 (11), bosutinib DB8 (11), silmitasertib 3NG (10).
+Re-fetching from RCSB would not change this: of the PDB entries holding STU, 1N1, STI and
+DB8 that KLIFS lacks, only four add a new *human kinase* (STU: TrkA 9DAI, KIT 8S19, AMPK
+8BIK; DB8: ILK 9D5F); the rest are rat/bovine/chicken orthologues, non-kinases (NQO2,
+PPARg, transthyretin) or cryo-EM GRK2. KLIFS's `drug_list` has 654 drugs, 246 of them
+with a human structure — and 178 of those with exactly one kinase.
+
+KLIFS's "drug search" page (`result.php?drug_search=`) lists structures of **analogues**
+(MFP similarity, e.g. 0.48 for agerafenib), not of the drug: not complexes of that drug.
+
+### Quality filter: loose, with the flags carried
+
+| filter | ligands >= 5 (structure) | Kd: ligands / complexes | IC50 |
+|---|---|---|---|
+| none | 18 | 11 / 108 | 7 / 72 |
+| **res <= 3.5, quality >= 4** (chosen) | 18 | 11 / 106 | 7 / 72 |
+| res <= 3.0, quality >= 6 | 15 | 8 / 87 | 6 / 63 |
+| res <= 2.5, quality >= 6 (old manifest) | 14 | 6 / 61 | 6 / 51 |
+
+(Counted against KLIFS's own bioactivity list, before the ChEMBL cleaning below.) Loss
+starts only at quality >= 6. Missing atoms are absorbed by repacking; missing pocket
+*residues* are backbone gaps — 23 of the 79 Kd-set complexes have some, carried as
+`missing_residues` so the analysis can be re-run without them.
+
+### KLIFS's bioactivities are a ChEMBL extract that cannot remove mutants
+
+`bioactivity_list_id` returns ChEMBL rows without variant, assay-type or document fields.
+Dasatinib: 545 KLIFS rows vs 993 ChEMBL rows with a pchembl value; 318 of 496
+target/measure pairs larger in ChEMBL. ChEMBL itself carries 112 *mutant* dasatinib rows
+on ABL1 alone (T315I at > 10 uM beside wild type at sub-nM), plus Bcr/Abl (CHIMERIC
+PROTEIN) and K562 (CELL-LINE) as targets. So KLIFS supplies structures and the ligand ->
+ChEMBL link; the values come from ChEMBL_37 by **parent** molecule (KLIFS pools salts:
+dasatinib/ABL1 Kd = 2 by molecule id, 25 by parent, 23 in KLIFS). Rules, first match
+wins: human SINGLE PROTEIN that is a KLIFS kinase; assay_type B; no
+data_validity_comment; potential_duplicate 0; no assay_variant_mutation; pchembl present
+(censored counted, never a number). Kd and IC50 are separate columns and separate sets,
+never pooled; Ki is excluded by decision (2 ligands would reach 5 kinases).
+
+### Result
+
+| set | ligands | complexes |
+|---|---|---|
+| Kd | 8 (STU 35, 1N1 9, DB8 7, STI 7, B96 6, 0LI 5, 3NG 5, VX6 5) | **79** |
+| IC50 | 7 | 69 |
+
+57 complexes are in both, so the two analyses are not independent confirmations. Kd is
+primary: IC50 = Ki(1 + [ATP]/Km,ATP) for ATP-competitive inhibitors, and Km,ATP varies
+across a selectivity panel.
+
+What removes ligands is the 1-log consistency rule, not missing data: sunitinib has Kd on
+7 structured kinases but 3 are inconsistent (KDR, PHKg2, MST3), tofacitinib loses TYK2 and
+stops at 4, SKE's JAK2/JAK2-b pair is domain-ambiguous. Dasatinib/ABL1 is still
+inconsistent (std 1.05, n = 6) *after* removing 19 annotated mutants — ChEMBL's variant
+annotation is incomplete for older papers, and the spread rule is the only backstop.
+
+Redocking headroom (`ligands.csv`, `n_kinases_Kd_any_structure_or_not`): consistent
+wild-type Kd on any human KLIFS kinase — STU 341, sunitinib 242, tozasertib 195,
+bosutinib 182, dovitinib 169, dasatinib 120 — against 5-35 with a crystal.
+
+Not done here: RCSB validation of the chosen PDB ids (obsolete entries, ligand absent),
+which belongs to the download step.
+
+### Download: 91 / 91 complexes prepared, and what Rosetta will silently drop
+
+`scripts/fetch_complex_set.py` prepares the union of the Kd and IC50 sets (91 complexes,
+91 PDB entries, 8 ligands) with `fetch_pilot.py`'s own cleaning code, after an RCSB check
+(all 91 `ok`: current, X-ray, ligand on the KLIFS chain, single-character chains, PDB
+format available; all 8 `_ideal.sdf` files carry hydrogens). Output under
+`data/kinome/complex_set/structures/`, `runs.csv` (frustx commands), `pocket_map.csv`.
+
+Three defects in the reused pilot code surfaced at this scale, fixed backward-compatibly:
+KLIFS returns JSON `null` for every pocket position of RSK3 2Z7R, which
+`pocket_map_table` read as the string "None" and counted as resolved; `check_pocket`
+counted only ATOM records, so kept modified residues in the pocket (CME 161 in PIM1
+1YHS; MSE 94/138 in MAPKAPK2 1NXK) were reported missing; and a heteroatom dropped from
+the kept chain was reported without its distance to the ligand. Now: 2 additives sit in
+the pocket and are dropped (malonate 3.4 A from silmitasertib in GSK3B 7Z1G, a PEG
+fragment 3.3 A from STU in TTK 3HMO); the second imatinib in ABL1 7N9G is 22 A from
+dasatinib; the AMPK activators (R34, C1V) are 11-12 A from STU.
+
+**frustx runs with `-ignore_unrecognized_res`, so an unknown residue type disappears
+without a message.** Checked by loading the cleaned files with frustx's init flags: TPO,
+SEP, PTR load as phosphorylated variants and MSE loads, but **CME, CXM and OCS are
+dropped** (PIM1 1YHS/5O11 CME 161, BRK 5H2U CXM 184, CDK2 4ERW OCS 177), as are residues
+without a full N/CA/C backbone (C-terminal stubs in LCK and PDK1; ULK3 6FDY PRO 9 and ALA
+26). Two of these losses are pocket positions: **STU/PIM1 CME 161 (αE.64)** and
+**DB8/ULK3 ALA 26 (g.l.9)**. All three dropped types are crystallisation artefacts
+(β-mercaptoethanol adduct, oxidised cysteine, N-carboxy-methionine), so mapping them back
+to CYS/MET is chemically defensible — not done yet; it is a decision.

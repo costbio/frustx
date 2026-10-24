@@ -203,7 +203,7 @@ def test_pocket_map_is_long_and_keeps_unresolved_positions():
     assert t["resolved"].sum() == 5
 
 
-@pytest.mark.parametrize("absent", ["-1", "", "0"])
+@pytest.mark.parametrize("absent", ["-1", "", "0", None])     # None: RSK3 2Z7R
 def test_absence_markers(absent):
     maps = {"1048": _map([(1, "I.1", absent)]), "117": _map([(1, "I.1", "290")])}
     t, _ = pocket_map_table(maps, COMPLEXES)
