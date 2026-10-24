@@ -3559,3 +3559,22 @@ from a pose is one the script predicted** — LCK 1QPD GLU 502 and PDK1 1OKY ALA
 (C-terminal stubs), CSK 1BYG GLY 187 (zero occupancy), ULK3 6FDY PRO 9 and ALA 26 (no
 backbone; ALA 26 is pocket position g.l.9, reported as `backbone_incomplete_in_pocket`).
 0 unexplained losses.
+
+### Ready to run: every complex loads, every ligand makes contacts
+
+The pilot had exercised three ligands (STI, 1N1, VX6). All 91 complexes were run through
+frustx before the real batch (2 decoys, `--protocol min`): 91 exit 0, ligand contacts
+20-37 per complex (median 26), none zero; the largest structure (p110g, 839 residues)
+loads in 40 s.
+
+That pass caught one collision: **fa_standard already has a residue type "B96"** — a
+non-canonical amino acid (protein, 30 atoms), not doramapimod (76 atoms). frustx refused
+to shadow it, correctly; its message offers "drop the flag", which here would have read
+the crystal's doramapimod as an amino acid. All 8 codes were checked (`has_name` /
+`has_name3`): only B96 collides. It runs as **B9X** (free in both indices):
+`fetch_complex_set.py` rewrites the HETATM name (`ROSETTA_CODE_CLASH`) and passes
+`--ligand-name B9X --ligand-name3 B9X`; `runs.csv` keeps `ligand_code` for joins.
+
+`scripts/run_complex_set.sh` runs the batch with the pilot's and COX's settings (relax,
+1000 decoys, seed 0, w = 0, readout pair, cutoff 10, ligand cutoff 6, CA), resumable, and
+refuses to call it comparable if any run.json disagrees on COMPARABLE_SETTINGS.

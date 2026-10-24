@@ -156,3 +156,12 @@ def test_zero_occupancy_backbone_counts_as_missing():
            for n in ("N", "CA", "C", "O")]
     res = prepare_complex(_complex(extra=gly), "A", "STI", ["1", "2"], _sdf(2, 3))
     assert res["report"]["backbone_incomplete"] == ["3"]
+
+
+def test_rename_ligand_touches_only_the_ligand_hetatm_name():
+    from fetch_complex_set import ROSETTA_CODE_CLASH, rename_ligand
+    lines = [_atom("ATOM", "CA", "ALA", "A", 1, 0.0), _atom("HETATM", "C1", "B96", "A", 600, 1.0)]
+    out = rename_ligand(lines, "B96", ROSETTA_CODE_CLASH["B96"])
+    assert out[0] == lines[0]
+    assert out[1][17:20] == "B9X" and out[1][:17] == lines[1][:17] and out[1][20:] == lines[1][20:]
+    assert rename_ligand(lines, "STI", "STI") is lines

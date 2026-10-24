@@ -93,6 +93,16 @@ PARENT_ATOMS = {"CYS": {"N", "CA", "C", "O", "OXT", "CB", "SG"},
 # clean_complex keeps is flagged, since it may be dropped just as silently.
 ROSETTA_READS = {"TPO", "SEP", "PTR", "MSE"}
 
+# Ligand codes that collide with a residue type Rosetta already ships. frustx refuses to
+# shadow those (ligand_params.refuse_shadowing) and tells you to rename -- dropping the
+# flag instead would be WRONG here: fa_standard's "B96" is a non-canonical amino acid
+# (protein, 30 atoms), not doramapimod (76 atoms), so the crystal's ligand would be read
+# as an amino acid. All 8 ligand codes were checked against fa_standard (has_name /
+# has_name3); only B96 collides. B9X is free in both indices and still reads as "B96".
+# The cleaned PDB's HETATM name is rewritten (frustx requires --ligand-name3 to match it)
+# and runs.csv carries both codes; joins back to the table use ligand_code.
+ROSETTA_CODE_CLASH = {"B96": "B9X"}
+
 
 # --- pure logic (tested offline in tests/test_fetch_complex_set.py) -------------------
 
@@ -144,6 +154,15 @@ def revert_artefacts(lines: list[str], parent: dict[str, str]) -> tuple[list[str
             line = "ATOM  " + line[6:17] + f"{p:>3}" + line[20:]
         out.append(line)
     return out, reverted
+
+
+def rename_ligand(lines: list[str], code: str, new: str) -> list[str]:
+    """Rewrite the ligand's residue name (columns 18-20) from `code` to `new`."""
+    if new == code:
+        return lines
+    return [line[:17] + f"{new:>3}" + line[20:]
+            if line.startswith("HETATM") and line[17:20].strip() == code else line
+            for line in lines]
 
 
 def backbone_incomplete(lines: list[str], code: str) -> list[str]:
@@ -283,8 +302,12 @@ def main(argv=None):
         ready = res["lines"] is not None and not any(k in BLOCKING for k in kinds)
 
         out_pdb, out_sdf = clean_dir / f"{name}.pdb", clean_dir / f"{c.ligand_code}.sdf"
+        name3 = ROSETTA_CODE_CLASH.get(c.ligand_code, c.ligand_code)
+        rename = (f"--ligand-name {name3} --ligand-name3 {name3}"
+                  if name3 != c.ligand_code else f"--ligand-name3 {name3}")
         if res["lines"] is not None:
-            out_pdb.write_text("\n".join(res["lines"]) + "\nEND\n")
+            lines = rename_ligand(res["lines"], c.ligand_code, name3)
+            out_pdb.write_text("\n".join(lines) + "\nEND\n")
             if not out_sdf.exists():
                 out_sdf.write_text(sdf_raw.read_text())
         rep = res["report"]
@@ -297,9 +320,9 @@ def main(argv=None):
             "pocket_present": rep.get("pocket_present"),
             "pocket_expected": rep.get("pocket_expected"),
             "structure": str(out_pdb) if res["lines"] is not None else "",
-            "ligand_sdf": str(out_sdf),
+            "ligand_sdf": str(out_sdf), "ligand_name3": name3,
             "frustx_command": (f"frustx {out_pdb} -o {a.results / name} "
-                               f"--ligand {out_sdf} --ligand-name3 {c.ligand_code}"
+                               f"--ligand {out_sdf} {rename}"
                                if ready else "")})
         reports.append({"complex": name, "pdb": c.pdb, "chain": c.chain,
                         "structure_md5": md5(struct),
