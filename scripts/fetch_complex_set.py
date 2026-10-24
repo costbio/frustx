@@ -33,10 +33,13 @@ Steps, per complex:
   3. Pocket map from KLIFS (interactions_match_residues, pilot_paralogs.py's code).
   4. Clean: the KLIFS chain; the ligand copy with most pocket contacts if the chain
      holds several; altloc blank or A; modified residues with a backbone kept; waters
-     and every other heteroatom dropped and counted.
+     and every other heteroatom dropped and counted. Then the crystallisation artefacts
+     Rosetta cannot read (CME, OCS -> CYS; CXM -> MET; see ARTEFACT_PARENT) are written
+     back as their parent residue, so they do not vanish from the pose.
   5. Check, and say so rather than patch: ligand heavy atoms in the crystal == in the
      SDF; SDF has hydrogens; pocket residues KLIFS resolved are present in the cleaned
-     chain; nothing but solvent dropped from the kept chain.
+     chain; nothing but solvent dropped near the ligand; no pocket residue missing its
+     backbone (Rosetta drops it); no kept modified residue outside ROSETTA_READS.
 
 `ready` in runs.csv is False when a check that would make the frustx result wrong or
 impossible failed (no ligand copy, heavy-atom mismatch, no hydrogens). Reported but not
@@ -70,6 +73,25 @@ from frustx.config import DEFAULT_LIGAND_CUTOFF  # noqa: E402
 
 # problems that make a frustx run wrong or impossible; everything else is reported only
 BLOCKING = ("no_ligand_copy", "heavy_atom_mismatch", "sdf_without_hydrogens")
+
+# Crystallisation artefacts that Rosetta does not read: frustx initialises with
+# -ignore_unrecognized_res, so they vanish from the pose WITHOUT a message (checked by
+# loading the cleaned files with frustx's init flags: PIM1 1YHS CME 161 -- a pocket
+# position, alphaE.64 -- BRK 5H2U CXM 184 and CDK2 4ERW OCS 177 were all missing from the
+# pose). Each is the parent residue plus atoms added during purification/crystallisation:
+#   CME  S,S-(2-hydroxyethyl)thiocysteine  beta-mercaptoethanol adduct on Cys
+#   OCS  cysteine sulfonic acid             oxidised Cys
+#   CXM  N-carboxymethionine                carbamylated N-terminal Met
+# so the parent is recovered by renaming the residue and keeping only the parent's atoms
+# (all present in every case seen). Decided 2026-10-24; --keep-artefacts turns it off.
+ARTEFACT_PARENT = {"CME": "CYS", "OCS": "CYS", "CXM": "MET"}
+PARENT_ATOMS = {"CYS": {"N", "CA", "C", "O", "OXT", "CB", "SG"},
+                "MET": {"N", "CA", "C", "O", "OXT", "CB", "CG", "SD", "CE"}}
+
+# Modified residues verified to load under frustx's init flags (same check): TPO, SEP and
+# PTR become phosphorylated variants, MSE loads. Any other modified residue that
+# clean_complex keeps is flagged, since it may be dropped just as silently.
+ROSETTA_READS = {"TPO", "SEP", "PTR", "MSE"}
 
 
 # --- pure logic (tested offline in tests/test_fetch_complex_set.py) -------------------
@@ -107,8 +129,44 @@ def dropped_het_distances(atoms: list[dict], chain: str, ligand_atoms: list[dict
     return out
 
 
+def revert_artefacts(lines: list[str], parent: dict[str, str]) -> tuple[list[str], dict]:
+    """Rewrite each artefact residue (ARTEFACT_PARENT) as its parent amino acid: ATOM
+    record, parent residue name, parent atoms only. Returns (lines, {"CME 161": "CYS"}).
+    Column layout is fixed-width PDB: record 1-6, residue name 18-20."""
+    out, reverted = [], {}
+    for line in lines:
+        resname = line[17:20].strip()
+        if line.startswith("HETATM") and resname in parent:
+            p = parent[resname]
+            reverted[f"{resname} {line[22:26].strip()}"] = p
+            if line[12:16].strip() not in PARENT_ATOMS[p]:
+                continue                       # an atom the artefact added
+            line = "ATOM  " + line[6:17] + f"{p:>3}" + line[20:]
+        out.append(line)
+    return out, reverted
+
+
+def backbone_incomplete(lines: list[str], code: str) -> list[str]:
+    """Residue numbers (not the ligand) lacking N, CA or C. Rosetta drops such a residue
+    from the pose -- C-terminal stubs (LCK 1QPD GLU 502, PDK1 1OKY ALA 360: only N) are
+    harmless, but ULK3 6FDY ALA 26 (only C, O) is a pocket position (g.l.9).
+
+    An atom with occupancy 0.00 counts as absent: Rosetta ignores those by default
+    (-ignore_zero_occupancy), which is how CSK 1BYG GLY 187 vanished from the pose with
+    all four backbone atoms in the file. Zero-occupancy SIDE-CHAIN atoms are not checked:
+    frustx's repack rebuilds them."""
+    names: dict = {}
+    for line in lines:
+        if line.startswith(("ATOM  ", "HETATM")) and line[17:20].strip() != code:
+            if float(line[54:60].strip() or 1) == 0.0:
+                continue
+            names.setdefault(line[22:27].strip(), set()).add(line[12:16].strip())
+    return [r for r, n in names.items() if not {"N", "CA", "C"} <= n]
+
+
 def prepare_complex(atoms: list[dict], chain: str, code: str, pocket_resseq: list[str],
-                    sdf_text: str, cutoff: float = DEFAULT_LIGAND_CUTOFF) -> dict:
+                    sdf_text: str, cutoff: float = DEFAULT_LIGAND_CUTOFF,
+                    artefact_parent: dict[str, str] = ARTEFACT_PARENT) -> dict:
     """Clean one complex and check it. Returns {lines, report, problems}; `lines` is
     None when there is no ligand copy to keep. No I/O, so it is testable on text."""
     pocket_atoms = [x for x in atoms if x["record"] == "ATOM" and x["chain"] == chain
@@ -119,6 +177,11 @@ def prepare_complex(atoms: list[dict], chain: str, code: str, pocket_resseq: lis
                 "problems": [("no_ligand_copy", f"no {code} copy on chain {chain}")]}
     copy_key, copy_scores = choose_copy(copies, pocket_atoms, cutoff)
     lines, stats = clean_complex(atoms, chain, code, copy_key)
+    lines, reverted = revert_artefacts(lines, artefact_parent)
+    unverified = sorted(k for k in stats["modified_residues_kept"]
+                        if k not in reverted and k.split(" ")[0] not in ROSETTA_READS)
+    no_backbone = backbone_incomplete(lines, code)
+    no_backbone_pocket = [r for r in no_backbone if r in set(pocket_resseq)]
     pocket = check_pocket(lines, pocket_resseq, ligand_code=code)
     sdf = sdf_atom_counts(sdf_text)
     het_dist = dropped_het_distances(atoms, chain, copies[copy_key],
@@ -143,9 +206,18 @@ def prepare_complex(atoms: list[dict], chain: str, code: str, pocket_resseq: lis
     if near:
         problems.append(("het_dropped_near_ligand",
                          f"within {cutoff} A of the ligand: {near}"))
+    if no_backbone_pocket:
+        problems.append(("backbone_incomplete_in_pocket",
+                         f"pocket residues without N/CA/C, Rosetta will drop them: "
+                         f"{no_backbone_pocket}"))
+    if unverified:
+        problems.append(("modified_residue_unverified",
+                         f"not known to load under frustx's flags, may be dropped "
+                         f"silently: {unverified}"))
     report = {"ligand_copies_on_chain": len(copies), "copy_chosen": copy_key[0],
               "copy_scores": copy_scores, **stats, **pocket, "sdf": sdf,
-              "dropped_het_min_distance_to_ligand": het_dist}
+              "dropped_het_min_distance_to_ligand": het_dist,
+              "artefacts_reverted": reverted, "backbone_incomplete": no_backbone}
     return {"lines": lines, "report": report, "problems": problems}
 
 
@@ -160,6 +232,9 @@ def main(argv=None):
     p.add_argument("--all", action="store_true",
                    help="prepare every row of the table, not only the Kd/IC50 sets")
     p.add_argument("--ligand-cutoff", type=float, default=DEFAULT_LIGAND_CUTOFF)
+    p.add_argument("--keep-artefacts", action="store_true",
+                   help="keep CME/OCS/CXM as they are instead of reverting them to "
+                        "CYS/MET (Rosetta will then drop them from the pose)")
     p.add_argument("--refresh", action="store_true", help="re-download structures")
     a = p.parse_args(argv)
     raw_dir, clean_dir = a.out / "structures" / "raw", a.out / "structures" / "clean"
@@ -202,7 +277,8 @@ def main(argv=None):
                   & pmap["resolved"]]
         res = prepare_complex(parse_atoms(struct.read_text()), c.chain, c.ligand_code,
                               pm["xray_residue"].tolist(), sdf_raw.read_text(),
-                              a.ligand_cutoff)
+                              a.ligand_cutoff,
+                              artefact_parent={} if a.keep_artefacts else ARTEFACT_PARENT)
         kinds = [k for k, _ in res["problems"]]
         ready = res["lines"] is not None and not any(k in BLOCKING for k in kinds)
 
@@ -241,6 +317,9 @@ def main(argv=None):
                      "ligand_from": "_ideal.sdf with --ligand (chemistry only; pose from "
                                     "the crystal's HETATM block)",
                      "modified_residues": "kept (they carry a protein backbone)",
+                     "artefacts_reverted_to_parent": {} if a.keep_artefacts
+                                                     else ARTEFACT_PARENT,
+                     "rosetta_reads_modified": sorted(ROSETTA_READS),
                      "blocking_problems": list(BLOCKING)},
         "rcsb_status": cx["rcsb_status"].value_counts().to_dict(),
         "pocket_label_problems": label_problems,

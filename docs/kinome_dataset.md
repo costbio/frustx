@@ -801,10 +801,15 @@ frame across kinases) and `fetch.json`.
 Reported, not blocking: two crystallisation additives dropped from inside the pocket
 (malonate in GSK3B 7Z1G, PEG in TTK 3HMO); no KLIFS pocket map for RSK3 2Z7R.
 
-**Rosetta silently drops three residue types** (frustx runs with
-`-ignore_unrecognized_res`): CME, CXM and OCS — all crystallisation artefacts — plus
-residues without a full backbone. Two of those losses are pocket positions: STU/PIM1
-CME 161 and DB8/ULK3 ALA 26. Mapping the artefacts back to CYS/MET is an open decision.
+**Rosetta silently drops what it does not recognise** (frustx runs with
+`-ignore_unrecognized_res` and Rosetta's default `-ignore_zero_occupancy`). Three residue
+types it cannot read — CME, OCS, CXM, all crystallisation artefacts, one of them PIM1's
+pocket position CME 161 — are **written back as their parent residue** (CYS, CYS, MET;
+decided 2026-10-24, `--keep-artefacts` turns it off). What is still lost is reported:
+residues without a full backbone, a zero-occupancy backbone included (LCK, PDK1 C-terminal
+stubs; CSK GLY 187; ULK3 PRO 9 and ALA 26 — ALA 26 is a pocket position). Loading all 91
+cleaned files with frustx's init flags confirmed it: **every residue missing from a pose
+is one the script predicted, 0 unexplained.**
 
 ---
 
@@ -876,9 +881,9 @@ provenance.
 | `scripts/fetch_pilot.py` | 19 KB | 12 |
 | `scripts/pilot_compare.py` | 17 KB | — |
 | **`scripts/klifs_complex_set.py`** | 22 KB | 11 |
-| **`scripts/fetch_complex_set.py`** | 14 KB | 10 |
+| **`scripts/fetch_complex_set.py`** | 19 KB | 15 |
 
-**240 tests collected** across the eight kinome test files, all offline.
+**245 tests** across the eight kinome test files, all offline, all passing.
 
 ### Data (`data/kinome/`, ~685 MB, not in git, tracked with DVC via `data.dvc`)
 
@@ -913,8 +918,9 @@ Generation 2 (current):
    and fires on n = 2 pairs. Keep it, loosen it, or require n ≥ 3 before applying it?
 2. **Complexes with missing pocket residues** (23 of 79 in the Kd set): keep and flag (as
    now), drop, or rebuild the gaps?
-3. **Artefact residues Rosetta drops** (CME, CXM, OCS; section 7): map them back to
-   CYS/MET before running frustx, or accept the gap (one pocket position in STU/PIM1)?
+3. ~~Artefact residues Rosetta drops~~ — decided: reverted to CYS/MET (section 7). Still
+   open within it: DB8/ULK3 lacks pocket position g.l.9 (ALA 26 has no backbone); keep
+   the complex with the gap, or drop it from the DB8 panel (7 -> 6 Kd complexes)?
 4. **Count check → frustration vs affinity, or redocking.** If 8 ligands / 79 complexes
    are not enough, the redocking pipeline extends each panel using `affinities.csv` as the
    target list.

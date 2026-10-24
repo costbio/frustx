@@ -107,3 +107,52 @@ def test_copy_in_the_pocket_is_chosen():
     res = prepare_complex(_complex(extra=far), "A", "STI", ["1", "2"], _sdf(2, 3))
     assert res["report"]["copy_chosen"] == "600"
     assert res["report"]["dropped_other_ligand_copies"] == {"STI 601": 2}
+
+
+def _cme(resseq=3, x=6.0):
+    return [_atom("HETATM", n, "CME", "A", resseq, x, el=n[0])
+            for n in ("N", "CA", "CB", "SG", "SD", "CE", "CZ", "OH", "C", "O")]
+
+
+def test_artefact_is_written_back_as_its_parent_with_parent_atoms_only():
+    res = prepare_complex(_complex(extra=_cme()), "A", "STI", ["1", "2", "3"], _sdf(2, 3))
+    cys = [l for l in res["lines"] if l[22:26].strip() == "3"]
+    assert {l[:6] for l in cys} == {"ATOM  "} and {l[17:20] for l in cys} == {"CYS"}
+    assert sorted(l[12:16].strip() for l in cys) == ["C", "CA", "CB", "N", "O", "SG"]
+    assert res["report"]["artefacts_reverted"] == {"CME 3": "CYS"}
+    assert res["problems"] == []
+    # columns other than record and residue name are untouched (same atom, N)
+    n_out = next(l for l in cys if l[12:16].strip() == "N")
+    assert n_out[6:17] == _cme()[0][6:17] and n_out[20:] == _cme()[0][20:]
+
+
+def test_artefacts_can_be_kept_and_are_then_flagged():
+    res = prepare_complex(_complex(extra=_cme()), "A", "STI", ["1", "2", "3"], _sdf(2, 3),
+                          artefact_parent={})
+    assert res["report"]["artefacts_reverted"] == {}
+    assert [k for k, _ in res["problems"]] == ["modified_residue_unverified"]
+
+
+def test_verified_modified_residue_is_not_flagged():
+    tpo = [_atom("HETATM", n, "TPO", "A", 3, 6.0) for n in ("N", "CA", "C", "O", "OG1", "P")]
+    assert prepare_complex(_complex(extra=tpo), "A", "STI", ["1", "2", "3"],
+                           _sdf(2, 3))["problems"] == []
+
+
+def test_pocket_residue_without_backbone_is_reported():
+    stub = [_atom("ATOM", n, "ALA", "A", 3, 6.0) for n in ("C", "O")]   # ULK3 ALA 26
+    res = prepare_complex(_complex(extra=stub), "A", "STI", ["1", "2", "3"], _sdf(2, 3))
+    assert [k for k, _ in res["problems"]] == ["backbone_incomplete_in_pocket"]
+    assert res["report"]["backbone_incomplete"] == ["3"]
+    # outside the pocket it is recorded, not a problem
+    res = prepare_complex(_complex(extra=stub), "A", "STI", ["1", "2"], _sdf(2, 3))
+    assert res["problems"] == [] and res["report"]["backbone_incomplete"] == ["3"]
+
+
+def test_zero_occupancy_backbone_counts_as_missing():
+    # CSK 1BYG GLY 187: all four backbone atoms present, N and CA at occupancy 0.00
+    gly = [_atom("ATOM", n, "GLY", "A", 3, 6.0).replace("  1.00  0.00", "  0.00  0.00")
+           if n in ("N", "CA") else _atom("ATOM", n, "GLY", "A", 3, 6.0)
+           for n in ("N", "CA", "C", "O")]
+    res = prepare_complex(_complex(extra=gly), "A", "STI", ["1", "2"], _sdf(2, 3))
+    assert res["report"]["backbone_incomplete"] == ["3"]

@@ -3542,3 +3542,20 @@ without a full N/CA/C backbone (C-terminal stubs in LCK and PDK1; ULK3 6FDY PRO 
 **DB8/ULK3 ALA 26 (g.l.9)**. All three dropped types are crystallisation artefacts
 (β-mercaptoethanol adduct, oxidised cysteine, N-carboxy-methionine), so mapping them back
 to CYS/MET is chemically defensible — not done yet; it is a decision.
+
+**Decided 2026-10-24: artefacts go back to the parent residue.** `fetch_complex_set.py`
+rewrites CME/OCS as CYS and CXM as MET (ATOM record, parent atoms only; all parent atoms
+were present in every case), `--keep-artefacts` to turn it off. Reverted: PIM1 1YHS and
+5O11 CME 161, CDK2 4ERW OCS 177, BRK 5H2U CXM 184. Any other modified residue outside the
+verified set {TPO, SEP, PTR, MSE} is flagged `modified_residue_unverified` (none today).
+
+The backbone check now counts a zero-occupancy N/CA/C as absent, because Rosetta's
+default `-ignore_zero_occupancy` drops those atoms: CSK 1BYG GLY 187 vanished from the
+pose with all four backbone atoms in the file (REMARK 480). Zero-occupancy side-chain
+atoms are left alone (repacking rebuilds them); no ligand atom has zero occupancy.
+
+**Verified by loading all 91 cleaned files with frustx's init flags: every residue lost
+from a pose is one the script predicted** — LCK 1QPD GLU 502 and PDK1 1OKY ALA 360
+(C-terminal stubs), CSK 1BYG GLY 187 (zero occupancy), ULK3 6FDY PRO 9 and ALA 26 (no
+backbone; ALA 26 is pocket position g.l.9, reported as `backbone_incomplete_in_pocket`).
+0 unexplained losses.
