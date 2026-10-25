@@ -3578,3 +3578,41 @@ the crystal's doramapimod as an amino acid. All 8 codes were checked (`has_name`
 `scripts/run_complex_set.sh` runs the batch with the pilot's and COX's settings (relax,
 1000 decoys, seed 0, w = 0, readout pair, cutoff 10, ligand cutoff 6, CA), resumable, and
 refuses to call it comparable if any run.json disagrees on COMPARABLE_SETTINGS.
+
+### Result: ligand-contact frustration does not follow affinity; raw interaction energy does
+
+`scripts/complex_set_compare.py` (rules fixed in its docstring before any association was
+computed) and `scripts/plot_complex_set.py`, on the 91 runs (1000 decoys, relax, all
+agreeing on COMPARABLE_SETTINGS). Output: `results/complex_set_analysis/`.
+
+**Pre-registered verdict: not supported for every frustration descriptor** (mean F,
+fraction minimally, fraction highly). Kd, pooled within-ligand rank correlation:
+
+| descriptor | all ligands (79) | without STU (44) | after removing contacts + energy |
+|---|---|---|---|
+| mean F | +0.09 (p 0.60) | +0.19 (p 0.30) | -0.07 (p 0.67) / +0.05 (p 0.79) |
+| fraction minimally | +0.30 (p 0.07) | +0.23 (p 0.20) | +0.09 / +0.16, n.s. |
+| interaction (-sum e_ij), no decoys | **+0.43 (p 0.007)** | **+0.61 (p < 0.001)** | — |
+| ligand contacts | -0.11 (p 0.51) | +0.34 (p 0.06) | — |
+
+(floor 0; every floor 0.1 / 0.3 / 0.5 gives the same picture — the interaction control is
+significant at all four, no frustration descriptor at any.) IC50 is no better: the only
+nominal hits are fraction highly in the *wrong* direction without STU (-0.40) and the two
+controls.
+
+This is the COX result again, now within ligands and with crystal poses instead of
+docking: Rosetta's raw interaction energy at the interface tracks affinity (STU rho 0.42
+p 0.015; positive in 7 of 8 ligands, 0.43-0.90), and normalising each contact by its
+decoy distribution removes that information rather than adding to it — the partial
+correlations are ~0.
+
+**The pooled statistic is ~STU.** Centred ranks give each ligand weight ~ n_g(n_g^2-1),
+so STU's 35 complexes carry 96% of it (null SD 0.164, hence p 0.007 for 0.43 with n=79).
+The "without STU" scope, pre-registered as robustness, is the real test of the other 7
+ligands. An equal-weight variant (ranks standardised within ligand) was NOT pre-registered;
+if wanted, it is a sensitivity analysis, reported as such.
+
+Exploratory, position level (STU, 28 pocket positions contacted in >= 10 kinases,
+permutation p, BH): c.l.74 (rho +0.51, q 0.06) and xDFG.81 (+0.49, q 0.06), both holding at
+floors 0.1 and 0.3 (rho 0.48 / 0.52 and 0.46 / 0.46). One ligand, not pre-registered, many
+positions: a hypothesis for the next experiment, not a finding.
