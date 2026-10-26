@@ -9,15 +9,22 @@ no decoys -- does track pKd. The figure set is built to show both, and why:
 
   fig1_classes.png      what the data are: each complex's ligand contacts by frustration
                         class, kinases ordered by pKd within each ligand
+  fig1_per_ligand/      the same, one figure per ligand with shares and counts printed,
+                        plus fig1_class_counts.csv (the numbers behind them)
   fig2_meanF_vs_pKd.png the primary descriptor against pKd, one panel per ligand
   fig3_interaction_vs_pKd.png  the decoy-free control, same layout -- the contrast
+  fig23_per_ligand/     fig2 and fig3 on one plot, one figure per ligand: mean F and
+                        interaction energy on twin axes, kinases ordered by pKd
   fig4_rho_heatmap.png  per-ligand Spearman rho for every descriptor and control (Kd)
-  fig5_pooled.png       pooled within-ligand statistics at all four energy floors, raw
-                        and partial, with and without STU, Kd and IC50
   fig6_stu_pocket.png   STU (35 kinases): frustration of the contact at each KLIFS pocket
                         position, kinases ordered by pKd (exploratory, position level)
-  fig7_floor.png        why the floor sweep exists: index vs native energy for every
-                        ligand contact
+
+Removed on 2026-10-26, by decision, as figures that confused more than they showed:
+fig5 (pooled statistics at every floor) -- its numbers are unchanged in pooled.csv and
+the pre-registered verdict in verdict.json, both written by complex_set_compare.py; and
+fig7 (index vs native energy for every ligand contact) -- the same values are the
+native_energy / frustration_index / decoy_std columns of positions.csv. The remaining
+figures keep their numbers so that earlier references stay valid.
 
 Colours: diverging blue (minimally / positive) <-> gray <-> red (highly / negative) for
 frustration and rho, the reference palette's diverging pair; categorical slots 1 and 2
@@ -41,7 +48,6 @@ INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e1e0d9"
 DIVERGING = LinearSegmentedColormap.from_list(
     "frustration", ["#b8322f", "#e34948", "#f0efec", "#2a78d6", "#184f95"])
 CLASS_COLOURS = {"minimally": "#2a78d6", "neutral": "#c3c2b7", "highly": "#e34948"}
-FLOOR_COLOURS = {0.0: "#86b6ef", 0.1: "#3987e5", 0.3: "#1c5cab", 0.5: "#0d366b"}
 DESC_LABEL = {"mean_F": "mean F", "frac_minimally": "fraction minimally",
               "frac_highly": "fraction highly", "n_contacts": "ligand contacts",
               "interaction": "interaction energy"}
@@ -113,6 +119,64 @@ def fig_classes(pos, desc, path):
     plt.close(fig)
 
 
+def fig_classes_per_ligand(pos, desc, outdir):
+    """fig1 split into one figure per ligand, with the numbers printed on it.
+
+    Same data and filter as fig_classes; the overview's bars are too small to read
+    shares off, and a selectivity comparison needs them. Percentages go inside a
+    segment only when it is wide enough to hold the text, so the exact counts
+    (minimally / neutral / highly, n) are always printed to the right of every bar.
+    Also writes the table behind the figures, fig1_class_counts.csv.
+    """
+    k = pos[pos["in_Kd_set"] & pos["frustration_index"].notna()]
+    cnt = (k.groupby(["ligand_code", "kinase_name", "pKd"])["frustration_class"]
+           .value_counts().unstack(fill_value=0).reset_index())
+    classes = ("minimally", "neutral", "highly")
+    for cls in classes:
+        if cls not in cnt:
+            cnt[cls] = 0
+    cnt["n"] = cnt[list(classes)].sum(axis=1)
+    for cls in classes:
+        cnt[f"frac_{cls}"] = cnt[cls] / cnt["n"]
+    outdir.mkdir(parents=True, exist_ok=True)
+    cnt.sort_values(["ligand_code", "pKd"], ascending=[True, False]).to_csv(
+        outdir / "fig1_class_counts.csv", index=False)
+
+    for lig in _ligand_order(desc):
+        d = cnt[cnt["ligand_code"] == lig].sort_values("pKd")
+        y = np.arange(len(d))
+        fig, ax = plt.subplots(figsize=(9, 1.2 + 0.38 * len(d)))
+        left = np.zeros(len(d))
+        for cls in classes:
+            v = d[f"frac_{cls}"].to_numpy()
+            ax.barh(y, v, left=left, color=CLASS_COLOURS[cls], height=0.78,
+                    edgecolor="white", linewidth=1, label=f"{cls} frustrated")
+            for yi, l0, w in zip(y, left, v):
+                if w >= 0.07:   # ~ the width of "100%" at fontsize 7
+                    ax.text(l0 + w / 2, yi, f"{w:.0%}", ha="center", va="center",
+                            fontsize=7, color=INK if cls == "neutral" else "white")
+            left += v
+        for yi, (_, r) in zip(y, d.iterrows()):
+            ax.text(1.02, yi, f"{r['minimally']:>2} / {r['neutral']:>2} / "
+                    f"{r['highly']:>2}   n={r['n']}", va="center", fontsize=7,
+                    color=MUTED, family="monospace", transform=ax.get_yaxis_transform())
+        ax.text(1.02, len(d) - 0.2, "min / neu / high", fontsize=7, color=MUTED,
+                family="monospace", transform=ax.get_yaxis_transform())
+        ax.set_yticks(y, [f"{n}  {p:.1f}" for n, p in zip(d["kinase_name"], d["pKd"])],
+                      fontsize=8)
+        ax.set_ylim(-0.6, len(d) - 0.1)
+        ax.set_xlim(0, 1)
+        ax.set_xticks(np.linspace(0, 1, 11), [f"{t:.0%}" for t in np.linspace(0, 1, 11)])
+        ax.set_xlabel("share of the complex's ligand contacts", color=MUTED)
+        _axes(ax, grid="x")
+        ax.set_title(f"{_label(lig)}: ligand-contact frustration per kinase "
+                     "(kinase, pKd; tightest binder on top)", loc="left", fontsize=10)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.9 / (1.2 + 0.38 * len(d))),
+                  ncol=3, frameon=False, fontsize=8)
+        fig.savefig(outdir / f"fig1_{lig}.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+
 def theil_sen(x, y):
     """Robust straight-line fit: slope = median of all pairwise slopes, intercept =
     median of y - slope * x. Chosen over least squares because the panels report
@@ -160,6 +224,53 @@ def fig_scatter(desc, per_lig, col, ylabel, title, path, floor=0.0):
     plt.close(fig)
 
 
+def fig_meanF_vs_interaction(desc, per_lig, outdir, floor=0.0):
+    """fig2 and fig3 on one plot, one figure per ligand: mean F (left axis) and the raw
+    Rosetta interaction energy (right axis) for every kinase.
+
+    The x axis is the kinase ordered by pKd (weakest left), evenly spaced rather than at
+    its pKd value: Spearman rho, the statistic both figures report, sees only that
+    order, and even spacing keeps 35 STU kinase names readable. The thin lines joining
+    the points are there to make the two profiles' shapes comparable, not to imply
+    anything between kinases. The two y axes have different units and are scaled
+    independently, so only the shapes (and the rho values) are compared, not heights.
+    """
+    k = desc[desc["in_Kd_set"] & (desc["floor"] == floor)]
+    outdir.mkdir(parents=True, exist_ok=True)
+    series = (("mean_F", "mean F of ligand contacts", BLUE, "o"),
+              ("interaction", "interaction energy, -sum e_ij (kcal/mol)", ORANGE, "s"))
+    for lig in _ligand_order(desc):
+        d = k[k["ligand_code"] == lig].sort_values(["pKd", "kinase_name"])
+        x = np.arange(len(d))
+        fig, ax = plt.subplots(figsize=(max(6.5, 0.32 * len(d) + 3), 4.2))
+        _axes(ax, grid="x")
+        axes = (ax, ax.twinx())
+        axes[1].spines["right"].set_color("#c3c2b7")
+        handles = []
+        for a, (col, ylabel, colour, marker) in zip(axes, series):
+            s = per_lig[(per_lig["measure"] == "Kd") & (per_lig["floor"] == floor)
+                        & (per_lig["ligand_code"] == lig)
+                        & (per_lig["descriptor"] == col)].iloc[0]
+            a.plot(x, d[col], color=colour, lw=0.8, alpha=0.5, zorder=2)
+            h = a.scatter(x, d[col], s=36, color=colour, marker=marker, edgecolor="white",
+                          linewidth=1, zorder=3,
+                          label=f"{DESC_LABEL[col]}:  rho {s.rho:+.2f}, p {s.p:.3f}")
+            handles.append(h)
+            a.set_ylabel(ylabel, color=colour)
+            a.tick_params(axis="y", colors=colour, labelsize=8)
+        axes[1].spines[["top", "left", "bottom"]].set_visible(False)
+        ax.set_xticks(x, [f"{n}\n{p:.1f}" for n, p in zip(d["kinase_name"], d["pKd"])],
+                      fontsize=7, rotation=90 if len(d) > 12 else 0)
+        ax.set_xlim(-0.6, len(d) - 0.4)
+        ax.set_xlabel("kinase, pKd (weakest -> tightest binder)", color=MUTED)
+        ax.set_title(f"{_label(lig)}: mean F vs interaction energy per kinase "
+                     f"(floor {floor:g}, n {len(d)})", loc="left", fontsize=10)
+        ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.08), ncol=2,
+                  frameon=False, fontsize=8)
+        fig.savefig(outdir / f"fig23_{lig}.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+
 def fig_rho_heatmap(per_lig, desc, path, floor=0.0):
     """Ligand x descriptor rho (Kd), diverging, with p in each cell."""
     cols = ["mean_F", "frac_minimally", "frac_highly", "n_contacts", "interaction"]
@@ -193,51 +304,6 @@ def fig_rho_heatmap(per_lig, desc, path, floor=0.0):
              "interaction energy; - for fraction highly (more highly frustrated contacts, "
              "weaker binding).", color=MUTED, fontsize=7.5)
     fig.tight_layout()
-    fig.savefig(path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-
-
-def fig_pooled(pooled, path):
-    """Pooled within-ligand statistic for every descriptor/test at all four floors.
-    Filled marker: p < 0.05; hollow: not significant."""
-    rows = [("mean_F", "pooled"), ("mean_F", "partial"),
-            ("frac_minimally", "pooled"), ("frac_minimally", "partial"),
-            ("frac_highly", "pooled"), ("frac_highly", "partial"),
-            ("n_contacts", "pooled"), ("interaction", "pooled")]
-    labels = [f"{DESC_LABEL[d]}" + ("  | controls removed" if t == "partial" else "")
-              for d, t in rows]
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7.5), sharex=True, sharey=True)
-    for (i, m), (j, scope) in [((i, m), (j, s)) for i, m in enumerate(("Kd", "IC50"))
-                               for j, s in enumerate(("all", "without_STU"))]:
-        ax = axes[i, j]
-        _axes(ax, grid="x")
-        ax.axvline(0, color="#898781", lw=0.9, ls="--")
-        ax.axhspan(5.5, 7.5, color="#f0efec", zorder=0)     # the two controls
-        d = pooled[(pooled["measure"] == m) & (pooled["scope"] == scope)]
-        for y, (desc, test) in enumerate(rows):
-            for k, f in enumerate(sorted(FLOOR_COLOURS)):
-                r = d[(d["descriptor"] == desc) & (d["test"] == test) & (d["floor"] == f)]
-                if r.empty:
-                    continue
-                r = r.iloc[0]
-                sig = r.p < 0.05
-                ax.scatter(r.stat, y + (k - 1.5) * 0.16, s=46, zorder=3,
-                           color=FLOOR_COLOURS[f] if sig else "white",
-                           edgecolor=FLOOR_COLOURS[f], linewidth=1.6,
-                           label=f"floor {f:g} kcal/mol" if (y == 0) else None)
-        n = int(d["n"].max())
-        ax.set_title(f"{m}, {'all ligands' if scope == 'all' else 'without STU'} "
-                     f"(n = {n})", loc="left", fontsize=9.5)
-        ax.set_yticks(range(len(rows)), labels)
-        ax.invert_yaxis()
-    for ax in axes[1]:
-        ax.set_xlabel("pooled within-ligand rank correlation with affinity", color=MUTED)
-    h, l = axes[0, 0].get_legend_handles_labels()
-    fig.suptitle("Pooled tests at every energy floor (filled = p < 0.05; shaded rows "
-                 "are the controls)", x=0.06, ha="left", fontsize=11, y=1.0)
-    fig.legend(h, l, loc="upper left", ncol=4, frameon=False, fontsize=8,
-               bbox_to_anchor=(0.06, 0.975))
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -321,32 +387,6 @@ def fig_stu_pocket(pos, path, min_kinases=10, dead=0.1):
                          "q": q})
 
 
-def fig_floor(pos, path):
-    """Every ligand contact: index vs native energy. The z-score's artefact is the cloud
-    of large |F| at near-zero energy; the dashed lines are the four floors."""
-    d = pos[pos["frustration_index"].notna()]
-    tiny = d["decoy_std"] <= 0.02
-    fig, ax = plt.subplots(figsize=(8.5, 5.2))
-    _axes(ax, grid="both")
-    ax.scatter(d.loc[~tiny, "native_energy"], d.loc[~tiny, "frustration_index"], s=10,
-               color=BLUE, alpha=0.45, linewidth=0, label="decoy sigma > 0.02")
-    ax.scatter(d.loc[tiny, "native_energy"], d.loc[tiny, "frustration_index"], s=14,
-               color=ORANGE, alpha=0.85, linewidth=0, label="decoy sigma <= 0.02")
-    for f in (0.1, 0.3, 0.5):          # the floor is on |e_ij|: both sides
-        ax.axvline(-f, color="#898781", lw=0.8, ls="--")
-        ax.axvline(f, color="#898781", lw=0.8, ls="--")
-    ax.text(-0.6, ax.get_ylim()[1] * 0.95, "floors |e_ij| = 0.1 / 0.3 / 0.5", fontsize=7.5,
-            color=MUTED, ha="right")
-    ax.set_xlabel("native interaction energy of the contact e_ij (kcal/mol)")
-    ax.set_ylabel("frustration index F")
-    ax.legend(frameon=False, fontsize=8, loc="lower left")
-    ax.set_title(f"All {len(d)} ligand contacts: the index is a z-score, so near-zero "
-                 "contacts can score high", loc="left", fontsize=10)
-    fig.tight_layout()
-    fig.savefig(path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--analysis", type=pathlib.Path,
@@ -355,10 +395,10 @@ def main(argv=None):
     d = a.analysis
     desc = pd.read_csv(d / "descriptors.csv")
     per_lig = pd.read_csv(d / "per_ligand.csv")
-    pooled = pd.read_csv(d / "pooled.csv")
     pos = pd.read_csv(d / "positions.csv")
 
     fig_classes(pos, desc, d / "fig1_classes.png")
+    fig_classes_per_ligand(pos, desc, d / "fig1_per_ligand")
     fig_scatter(desc, per_lig, "mean_F", "mean frustration index of ligand contacts",
                 "Primary descriptor: mean ligand-contact frustration vs pKd (floor 0)",
                 d / "fig2_meanF_vs_pKd.png")
@@ -366,12 +406,11 @@ def main(argv=None):
                 "interaction energy, -sum e_ij (kcal/mol)",
                 "Control: Rosetta interaction energy at the ligand interface vs pKd "
                 "(no decoys; floor 0)", d / "fig3_interaction_vs_pKd.png")
+    fig_meanF_vs_interaction(desc, per_lig, d / "fig23_per_ligand")
     fig_rho_heatmap(per_lig, desc, d / "fig4_rho_heatmap.png")
-    fig_pooled(pooled, d / "fig5_pooled.png")
     stu = fig_stu_pocket(pos, d / "fig6_stu_pocket.png")
     stu.to_csv(d / "stu_positions.csv", index=False)
-    fig_floor(pos, d / "fig7_floor.png")
-    print(f"wrote 7 figures to {d}")
+    print(f"wrote figures to {d}")
 
 
 if __name__ == "__main__":

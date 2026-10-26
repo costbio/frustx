@@ -3595,10 +3595,20 @@ fraction minimally, fraction highly). Kd, pooled within-ligand rank correlation:
 | interaction (-sum e_ij), no decoys | **+0.43 (p 0.007)** | **+0.61 (p < 0.001)** | — |
 | ligand contacts | -0.11 (p 0.51) | +0.34 (p 0.06) | — |
 
-(floor 0; every floor 0.1 / 0.3 / 0.5 gives the same picture — the interaction control is
-significant at all four, no frustration descriptor at any.) IC50 is no better: the only
-nominal hits are fraction highly in the *wrong* direction without STU (-0.40) and the two
-controls.
+(floor 0. The interaction control is significant at all four floors in both scopes. No
+frustration descriptor passes the rule; the one nominal frustration hit for Kd is
+fraction highly without STU at floor 0.5 only: -0.44, p 0.009, against +0.01 (p 0.97) at
+floor 0, and its partial is not significant at any floor.)
+
+IC50 (secondary). With all ligands nothing is significant; fraction highly sits at
++0.31-0.34 (p 0.06-0.07), i.e. *against* the hypothesis (more highly frustrated contacts,
+tighter binding). Without STU, fraction highly is -0.39 to -0.41 (p 0.02-0.03) at floors
+0-0.3 — the hypothesis direction (for fraction highly the expected sign is negative) —
+but -0.21 (p 0.26) at 0.5, and with the controls removed it is -0.14 (p 0.42): in that
+scope ligand contacts alone gives +0.41-0.53 (p <= 0.02), so the signal is pocket size,
+not frustration. The two scopes also disagree in sign. (Corrected 2026-10-26: an earlier
+version of this paragraph called the -0.40 the "wrong" direction; for fraction highly
+negative is the hypothesis direction.)
 
 This is the COX result again, now within ligands and with crystal poses instead of
 docking: Rosetta's raw interaction energy at the interface tracks affinity (STU rho 0.42
